@@ -53,13 +53,28 @@ drogon::Task<drogon::HttpResponsePtr> minio::asyncHandleHttpRequest(HttpRequestP
                 auto video = co_await mapper.findByPrimaryKey(videoId);
                 video.setStatus((uint8_t)Status::processing);
                 co_await mapper.update(video);
-                // Redisにタスクを積む
-                auto redisClient = drogon::app().getRedisClient();
-                if (redisClient) {
-                    std::cout << "Pushing video ID " << videoId << " to Redis encode_queue" << std::endl;
-                    co_await redisClient->execCommandCoro("LPUSH encode_queue %s", videoId.c_str());
-                } else {
-                    std::cerr << "Failed to get Redis client" << std::endl;
+                std::cout << "Pushing video ID " << videoId << " to Modal" << std::endl;
+                // Modalにpostする
+                // TODO: modalのホスト名
+                auto client = drogon::HttpClient::newHttpClient("http://modal:8080");
+                auto req = drogon::HttpRequest::newHttpRequest();
+                req->setMethod(drogon::HttpMethod::Post);
+                // TODO: Modalのエンドポイントのpath
+                req->setPath("/");
+                Json::Value payload;
+                payload["video_id"] = videoId;
+                req->setJsonObject(payload);
+
+                try {
+                    auto resp = co_await client->sendRequestCoro(req);
+                    if (resp->getStatusCode() == drogon::HttpStatusCode::k200OK) {
+                        std::cout << "Successfully pushed video ID " << videoId << " to Modal" << std::endl;
+                    } else {
+                        std::cerr << "Failed to push video ID " << videoId << " to Modal. HTTP Status: " << resp->getStatusCode() << std::endl;
+                    }
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "Error sending request to Modal: " << e.what() << std::endl;
                 }
             }
             catch (const drogon::orm::DrogonDbException& e) {
