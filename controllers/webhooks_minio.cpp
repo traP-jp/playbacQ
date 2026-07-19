@@ -1,4 +1,5 @@
 #include "webhooks_minio.h"
+#include <drogon/HttpClient.h>
 #include <drogon/orm/Exception.h>
 #include <drogon/orm/CoroMapper.h>
 #include <drogon/orm/Criteria.h>
@@ -55,15 +56,14 @@ drogon::Task<drogon::HttpResponsePtr> minio::asyncHandleHttpRequest(HttpRequestP
                 co_await mapper.update(video);
                 std::cout << "Pushing video ID " << videoId << " to Modal" << std::endl;
                 // Modalにpostする
-                // TODO: modalのホスト名
-                auto client = drogon::HttpClient::newHttpClient("http://modal:8080");
-                auto req = drogon::HttpRequest::newHttpRequest();
-                req->setMethod(drogon::HttpMethod::Post);
-                // TODO: Modalのエンドポイントのpath
-                req->setPath("/");
+                const char* modalHost_env = std::getenv("MODAL_HOST");
+                std::string modalHost = modalHost_env ? modalHost_env : "http://localhost:8080";
+                auto client = drogon::HttpClient::newHttpClient(modalHost);
                 Json::Value payload;
                 payload["video_id"] = videoId;
-                req->setJsonObject(payload);
+                auto req = drogon::HttpRequest::newHttpJsonRequest(payload);
+                req->setMethod(drogon::HttpMethod::Post);
+                req->setPath("/");
 
                 try {
                     auto resp = co_await client->sendRequestCoro(req);

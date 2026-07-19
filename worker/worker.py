@@ -8,7 +8,8 @@ dockerfile_path = os.path.join(base_dir, "Dockerfile.worker")
 
 image = modal.Image.from_dockerfile(
     dockerfile_path,
-    context_mount=modal.Mount.from_local_dir(base_dir, remote_path="/context")
+    context_dir=base_dir,
+    add_python="3.14"
 )
 
 app = modal.App("playbacq-worker")
@@ -17,15 +18,17 @@ app = modal.App("playbacq-worker")
     image=image,
     # GPUはT4が動画エンコードに最適らしい
     gpu="T4",
-    secrets=[modal.Secret.from_dotenv(__file__+"/../../.env")],
+    secrets=[modal.Secret.from_name("playbacQ-env")],
     # エンコードに1h以上かかるような動画はお断り
     timeout=3600
     )
 def encode(video_id: str):
     # C++を実行
-    subprocess.run(["/usr/local/bin/playbacq_worker", video_id])
-@app.function()
-@modal.web_endpoint(method="POST")
+    subprocess.run(["/usr/local/bin/playbacq_worker", video_id], check=True)
+webhook_image = modal.Image.debian_slim().pip_install("fastapi[standard]")
+
+@app.function(image=webhook_image)
+@modal.fastapi_endpoint(method="POST")
 def encode_webhook(data: dict):
     video_id = data.get("video_id")
     if not video_id:

@@ -209,10 +209,10 @@ int main(int argc, char* argv[]) {
 			std::cout << "Using MinIO endpoint: " << minioEndpoint << std::endl;
 
 			std::cout << "\n[JOB RECEIVED] Video ID: " << video_id << std::endl;
-			const char* envUser = std::getenv("MINIO_ROOT_USER");
-			const char* envPassword = std::getenv("MINIO_ROOT_PASSWORD");
-			std::string accessKey = envUser ? envUser : "";
-			std::string secretKey = envPassword ? envPassword : "";
+			const char* envMinIOUser = std::getenv("MINIO_ROOT_USER");
+			const char* envMinIOPassword = std::getenv("MINIO_ROOT_PASSWORD");
+			std::string accessKey = envMinIOUser ? envMinIOUser : "";
+			std::string secretKey = envMinIOPassword ? envMinIOPassword : "";
 
 			Aws::Auth::AWSCredentials credentials(accessKey.c_str(), secretKey.c_str());
 			Aws::Client::ClientConfiguration clientConfig;
@@ -252,13 +252,13 @@ int main(int argc, char* argv[]) {
 				if (total_duration_sec <= 0.0) {
 					std::cerr << "Invalid video duration: " << total_duration_sec << " seconds for video ID: " << video_id << std::endl;
 					postEncodeResult(video_id, "failed", "Invalid video duration");
-					continue;
+					return 1;
 				}
 			}
 			catch (const std::exception& e) {
 				std::cerr << "ffprobe error: " << e.what() << std::endl;
 				postEncodeResult(video_id, "failed", "ffprobe error: " + std::string(e.what()));
-				continue;
+				return 1;
 			}
 
 			int last_notified_percent = -1;
@@ -339,7 +339,7 @@ int main(int argc, char* argv[]) {
 					std::cerr << "ffmpeg exited with code " << exit_code << " for video ID: " << video_id << std::endl;
 					// エラーが発生した場合はDrogonに失敗を知らせる (Pub/Sub)
 					postEncodeResult(video_id, "failed", "ffmpeg exited with code " + std::to_string(exit_code));
-					continue;
+					return 1;
 				}
 				// シークバー用のサムネ生成
 				std::vector<std::string> thumb_args = {
@@ -369,7 +369,7 @@ int main(int argc, char* argv[]) {
 				} else {
 					std::cerr << "ffmpeg exited with code " << exit_code << " for video ID: " << video_id << std::endl;
 					postEncodeResult(video_id, "failed", "ffmpeg exited with code " + std::to_string(exit_code));
-					continue;
+					return 1;
 				}
 				//TODO: 選択制にする
 				//ホンモノのサムネ生成
@@ -396,13 +396,13 @@ int main(int argc, char* argv[]) {
 				} else {
 					std::cerr << "ffmpeg exited with code " << exit_code << " for video ID: " << video_id << std::endl;
 					postEncodeResult(video_id, "failed", "ffmpeg exited with code " + std::to_string(exit_code));
-					continue;
+					return 1;
 				}
 			}
 			catch (const std::exception& e) {
 				std::cerr << "Encoding Error: " << e.what() << std::endl;
 				postEncodeResult(video_id, "failed", "Encoding error: " + std::string(e.what()));
-				continue;
+				return 1;
 			}
 			// WebTTファイルの生成
 			std::ofstream vtt_file(base_dir + "thumbnails.vtt");
