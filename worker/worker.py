@@ -19,6 +19,8 @@ app = modal.App("playbacq-worker")
     # GPUはT4が動画エンコードに最適らしい
     gpu="T4",
     secrets=[modal.Secret.from_name("playbacQ-env")],
+    # 処理終了後は即コンテナを破棄
+    scaledown_window=2,
     # エンコードに1h以上かかるような動画はお断り
     timeout=3600
     )
