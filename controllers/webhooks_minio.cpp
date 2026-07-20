@@ -57,7 +57,7 @@ drogon::Task<drogon::HttpResponsePtr> minio::asyncHandleHttpRequest(HttpRequestP
                 std::cout << "Pushing video ID " << videoId << " to Modal" << std::endl;
                 // Modalにpostする
                 const char* modalHost_env = std::getenv("MODAL_HOST");
-                std::string modalHost = modalHost_env ? modalHost_env : "http://localhost:8080";
+                std::string modalHost = modalHost_env ? modalHost_env : "http://localhost:9999";
                 auto client = drogon::HttpClient::newHttpClient(modalHost);
                 Json::Value payload;
                 payload["video_id"] = videoId;
