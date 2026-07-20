@@ -11,7 +11,7 @@ COPY models/ /app/models/
 COPY controllers/ /app/controllers/
 COPY filters/ /app/filters/
 COPY plugins/ /app/plugins/
-COPY config.json config.yaml /app/
+
 RUN mkdir build && cd build && cmake .. -DBUILD_WORKER=OFF && make -j${BUILD_JOBS}
 
 FROM gcc:15.2
@@ -29,7 +29,7 @@ COPY --from=builder /usr/lib/x86_64-linux-gnu/libboost_*.so* /usr/lib/x86_64-lin
 RUN ldconfig
 
 WORKDIR /app
-COPY config.json config.yaml /app/
+
 COPY --from=builder /app/build/playbacq /usr/local/bin/playbacq
 RUN chmod +x /usr/local/bin/playbacq
 
