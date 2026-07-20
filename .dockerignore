@@ -9,7 +9,6 @@ Testing/
 test/
 coverage.xml
 *.log
-config.yaml
 config.test.json
 .env
 .env.prod
