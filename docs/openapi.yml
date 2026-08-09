@@ -124,6 +124,8 @@ paths:
           application/json:
             schema:
               type: object
+              required:
+                - url
               properties:
                 title:
                   type: string
@@ -148,6 +150,8 @@ paths:
           description: "リクエストが不正です。"
         "403":
           description: "アクセスが拒否されました。"
+        "500":
+          description: "サーバー内部エラー"
 
   /api/videos/{id}:
     get:
@@ -1035,7 +1039,7 @@ components:
         type:
           type: string
           readOnly: true
-          description: "動画の種類(youtube, internal)"
+          description: "動画の種類(youtube, youtube live , internal)"
         view_count:
           type: integer
           readOnly: true
