@@ -261,7 +261,7 @@ drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
 		// URLからYoutubeの動画IDを抽出(将来的に別の動画サイトに対応する場合はここで判定する。)
 		const std::string videoUrl = jsonPtr->get("url", "").asString();
 		std::regex youtubeRegex(
-			R"(^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})(?:\S+)?$)"
+			R"(^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/|live\/))([\w-]{11})(?:\S+)?$)"
 		);
 		std::smatch match;
 		std::string youtubeID;
@@ -275,8 +275,6 @@ drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
 			co_return resp;
 		}
 		newVideo.setThumbnailUrl("https://img.youtube.com/vi/" + youtubeID + "/hqdefault.jpg");
-		// 現時点ではYoutubeのみ対応
-		newVideo.setType("youtube");
 		// Youtube APIを使って動画情報を取得する。
 		const char* apiKeyEnv = std::getenv("YOUTUBE_API_KEY");
 		if (apiKeyEnv == nullptr) {
@@ -294,6 +292,12 @@ drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
 			co_return resp;
 		}
 		const Json::Value videoInfo = videoInfoRaw.value();
+		// 現時点ではYoutubeのみ対応
+		if (videoInfo.get("isLive", false).asBool() || videoInfo.get("isUpcoming", false).asBool()) {
+			newVideo.setType("youtube live");
+		} else {
+			newVideo.setType("youtube");
+		}
 		// titleが空ならデフォルト値を設定する。
 		if (!jsonPtr->isMember("title") || jsonPtr->get("title", "").asString().empty()) {
 			newVideo.setTitle(videoInfo.get("title", "NULL").asString());

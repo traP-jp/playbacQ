@@ -26,6 +26,8 @@ namespace YoutubeAPI {
 			const auto& snippet = (*jsonPtr)["items"][0]["snippet"];
 			videoInfo["title"] = snippet.get("title", "").asString();
 			videoInfo["description"] = snippet.get("description", "").asString();
+			videoInfo["isLive"] = snippet.get("liveBroadcastContent", "").asString() == "live";
+			videoInfo["isUpcoming"] = snippet.get("liveBroadcastContent", "").asString() == "upcoming";
 			// 再生時間を取得する
 			const std::string durationStr = (*jsonPtr)["items"][0]["contentDetails"].get("duration", "").asString();
 			// ISO 8601形式の期間を秒に変換する

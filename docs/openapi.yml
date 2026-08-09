@@ -1012,11 +1012,11 @@ components:
           type: string
           readOnly: true
           description: "動画の説明"
-        url:
+        video_url:
           type: string
           readOnly: true
           description: "動画の公開用URL"
-        thumbnailUrl:
+        thumbnail_url:
           type: string
           readOnly: true
           description: "動画の公開用サムネイルURL"
@@ -1028,10 +1028,30 @@ components:
           type: string
           readOnly: true
           description: "動画のサムネイルアップロード用URL"
-        viewCount:
+        user_id:
+          type: string
+          readOnly: true
+          description: "動画を投稿したユーザーのID"
+        type:
+          type: string
+          readOnly: true
+          description: "動画の種類(youtube, internal)"
+        view_count:
           type: integer
           readOnly: true
           description: "動画の再生回数"
+        like_count:
+          type: integer
+          readOnly: true
+          description: "動画のいいね数"
+        status:
+          type: integer
+          readOnly: true
+          description: "動画の状態(pending, processing, completed, failed)"
+        is_external:
+          type: boolean
+          readOnly: true
+          description: "外部動画かどうか"
         duration:
           type: number
           readOnly: true
