@@ -733,6 +733,49 @@ DROGON_TEST(AuthTest)
 	CHECK(deleteVideoResp->getStatusCode() == drogon::k200OK);
 }
 
+DROGON_TEST(AuthRedirectTest)
+{
+	auto defaultResp = sendSyncRequest(drogon::Get, "/api/auth/login");
+	REQUIRE(defaultResp != nullptr);
+	CHECK(defaultResp->getStatusCode() == drogon::k302Found);
+	const std::string defaultLocation = defaultResp->getHeader("Location");
+	REQUIRE(!defaultLocation.empty());
+	REQUIRE(defaultLocation.back() == '/');
+
+	const std::string redirectPath = "/watch/ABCD1234?tab=comments#latest";
+	auto validResp = sendSyncRequest(
+		drogon::Get,
+		"/api/auth/login",
+		Json::Value::null,
+		{{"redirect", redirectPath}}
+	);
+	REQUIRE(validResp != nullptr);
+	CHECK(validResp->getStatusCode() == drogon::k302Found);
+	CHECK(validResp->getHeader("Location") == defaultLocation.substr(0, defaultLocation.size() - 1) + redirectPath);
+
+	const std::vector<std::string> unsafeRedirects = {
+		"https://evil.example/",
+		"javascript:alert(1)",
+		"data:text/html,unsafe",
+		"//evil.example/",
+		"///evil.example/",
+		"/\\evil.example/",
+		"/watch/ABCD1234\r\nLocation: https://evil.example/",
+		""
+	};
+	for (const auto& unsafeRedirect : unsafeRedirects) {
+		auto unsafeResp = sendSyncRequest(
+			drogon::Get,
+			"/api/auth/login",
+			Json::Value::null,
+			{{"redirect", unsafeRedirect}}
+		);
+		REQUIRE(unsafeResp != nullptr);
+		CHECK(unsafeResp->getStatusCode() == drogon::k302Found);
+		CHECK(unsafeResp->getHeader("Location") == defaultLocation);
+	}
+}
+
 DROGON_TEST(VttTest)
 {
 	std::optional<std::string> videoIdOpt = postVideo("VTTテスト");

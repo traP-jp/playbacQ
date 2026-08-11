@@ -652,20 +652,23 @@ paths:
     get:
       summary: 部員認証（SSO）用リダイレクトエンドポイント
       operationId: authLogin
-      x-tested: false
+      x-tested: true
       description: |
         PaaS側の部員認証（リバースプロキシ認証）を確実に通過させるためのエンドポイント。
         フロントエンドからこのURLへ画面自体を遷移させることで、PaaSのログインフローをトリガーします。
-        Drogon側での処理後、クエリパラメータ `redirect` で指定されたURLへ 302 Found で送り返します。
+        Drogon側での処理後、クエリパラメータ `redirect` で指定されたフロントエンド内のパスへ 302 Found で送り返します。
+        リダイレクト先のオリジンは、信頼済みのフロントエンドオリジンに固定します。
+        `redirect` が未指定または不正な場合は `/` へ戻します。
       tags:
         - Auth
       parameters:
         - name: redirect
           in: query
-          description: 認証完了後に戻るフロントエンドの元のURL（URIエンコードされていること）
+          description: 認証完了後に戻るフロントエンド内の絶対パス。URIデコード後の値が、空でない、`/` で始まる、`//` では始まらない、バックスラッシュとASCII制御文字を含まない、のすべてを満たす必要があります。外部URLは指定できません。
           schema:
             type: string
-            format: uri
+            format: uri-reference
+            pattern: "^/[^/\\\\\\x00-\\x1F\\x7F]*$"
       responses:
         "302":
           description: 認証完了。指定されたURLへリダイレクトします。
