@@ -7,7 +7,7 @@ using namespace api;
 
 namespace {
 
-constexpr std::string_view kDefaultFrontendUrl = "https://playbacq.trap.show";
+constexpr std::string_view kDefaultFrontendUrl = "http://localhost:4200";
 constexpr std::string_view kDefaultRedirectPath = "/";
 
 bool isSafeRedirectPath(std::string_view redirectPath) {
