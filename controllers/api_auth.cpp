@@ -25,6 +25,32 @@ bool isSafeRedirectPath(std::string_view redirectPath) {
     return true;
 }
 
+std::string normalizeRedirectPath(std::string_view redirect, std::string_view frontendUrl) {
+    if (isSafeRedirectPath(redirect)) {
+        return std::string(redirect);
+    }
+
+    if (frontendUrl.empty()) {
+        return std::string(kDefaultRedirectPath);
+    }
+
+    if (redirect == frontendUrl) {
+        return std::string(kDefaultRedirectPath);
+    }
+
+    const bool hasSameFrontendPrefix = redirect.size() > frontendUrl.size()
+        && redirect.compare(0, frontendUrl.size(), frontendUrl) == 0
+        && redirect[frontendUrl.size()] == '/';
+    if (!hasSameFrontendPrefix) {
+        return std::string(kDefaultRedirectPath);
+    }
+
+    const std::string_view redirectPath = redirect.substr(frontendUrl.size());
+    return isSafeRedirectPath(redirectPath)
+        ? std::string(redirectPath)
+        : std::string(kDefaultRedirectPath);
+}
+
 std::string getFrontendUrl() {
     const char* configuredUrl = std::getenv("FRONTEND_URL");
     std::string frontendUrl = configuredUrl != nullptr && configuredUrl[0] != '\0'
@@ -40,10 +66,11 @@ std::string getFrontendUrl() {
 
 drogon::Task<drogon::HttpResponsePtr> auth::login(HttpRequestPtr req) {
     auto redirectUrl = req->getOptionalParameter<std::string>("redirect");
-    std::string_view redirectPath = redirectUrl.has_value() && isSafeRedirectPath(*redirectUrl)
-        ? std::string_view(*redirectUrl)
-        : kDefaultRedirectPath;
-    std::string target = getFrontendUrl() + std::string(redirectPath);
+    const std::string frontendUrl = getFrontendUrl();
+    const std::string redirectPath = redirectUrl.has_value()
+        ? normalizeRedirectPath(*redirectUrl, frontendUrl)
+        : std::string(kDefaultRedirectPath);
+    std::string target = frontendUrl + redirectPath;
     auto resp = drogon::HttpResponse::newRedirectionResponse(target);
     co_return resp;
 }

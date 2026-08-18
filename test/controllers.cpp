@@ -742,19 +742,44 @@ DROGON_TEST(AuthRedirectTest)
 	REQUIRE(!defaultLocation.empty());
 	REQUIRE(defaultLocation.back() == '/');
 
-	const std::string redirectPath = "/watch/ABCD1234?tab=comments#latest";
-	auto validResp = sendSyncRequest(
+	const std::string frontendOrigin = defaultLocation.substr(0, defaultLocation.size() - 1);
+	const std::vector<std::string> redirectPaths = {
+		"/watch/ABCD1234?tab=comments#latest",
+		"/new-feature/nested/path?mode=preview#details",
+		"/users/testuser/settings",
+		"/?from=login"
+	};
+	for (const auto& redirectPath : redirectPaths) {
+		for (const auto& redirect : {redirectPath, frontendOrigin + redirectPath}) {
+			auto validResp = sendSyncRequest(
+				drogon::Get,
+				"/api/auth/login",
+				Json::Value::null,
+				{{"redirect", redirect}}
+			);
+			REQUIRE(validResp != nullptr);
+			CHECK(validResp->getStatusCode() == drogon::k302Found);
+			CHECK(validResp->getHeader("Location") == frontendOrigin + redirectPath);
+		}
+	}
+
+	auto originOnlyResp = sendSyncRequest(
 		drogon::Get,
 		"/api/auth/login",
 		Json::Value::null,
-		{{"redirect", redirectPath}}
+		{{"redirect", frontendOrigin}}
 	);
-	REQUIRE(validResp != nullptr);
-	CHECK(validResp->getStatusCode() == drogon::k302Found);
-	CHECK(validResp->getHeader("Location") == defaultLocation.substr(0, defaultLocation.size() - 1) + redirectPath);
+	REQUIRE(originOnlyResp != nullptr);
+	CHECK(originOnlyResp->getStatusCode() == drogon::k302Found);
+	CHECK(originOnlyResp->getHeader("Location") == defaultLocation);
 
 	const std::vector<std::string> unsafeRedirects = {
 		"https://evil.example/",
+		"https://www.youtube.com",
+		frontendOrigin + ".evil.example/",
+		frontendOrigin + "@evil.example/",
+		frontendOrigin + "//evil.example/",
+		frontendOrigin + "/\\evil.example/",
 		"javascript:alert(1)",
 		"data:text/html,unsafe",
 		"//evil.example/",
