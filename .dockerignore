@@ -1,0 +1,14 @@
+.git
+.github
+.vscode
+.devcontainer
+build/
+output/
+uploads/
+Testing/
+test/
+coverage.xml
+*.log
+config.test.json
+.env
+.env.prod

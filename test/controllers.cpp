@@ -11,6 +11,10 @@
 #include <thread>
 #include <chrono>
 #include <iostream>
+#include <mutex>
+#include <condition_variable>
+#include <algorithm>
+#include <vector>
 #include "../controllers/websocket_comments.h"
 
 drogon::HttpResponsePtr sendSyncRequest(
@@ -819,6 +823,10 @@ DROGON_TEST(VttTest)
 	// クリーンアップ
 	CHECK(deleteVideo(videoId) == true);
 }
+// Modalモックサーバーのグローバル変数
+extern std::mutex g_modalMutex;
+extern std::vector<std::string> g_modalReceivedVideoIds;
+extern std::condition_variable g_modalCv;
 
 DROGON_TEST(WebhookMinioTest)
 {
@@ -843,29 +851,19 @@ DROGON_TEST(WebhookMinioTest)
 	auto dbResult = dbClient->execSqlSync("SELECT status FROM videos WHERE video_id = ?", videoId);
 	REQUIRE(dbResult.size() == 1);
 	CHECK(dbResult[0]["status"].as<int>() == 1);
-	// Redisにエンコード待ちのキーがセットされていることを確認
-	auto redisClient = drogon::app().getRedisClient();
-	REQUIRE(redisClient != nullptr);
-	std::promise<std::optional<std::string>> redisProm;
-	auto redisFut = redisProm.get_future();
-	// RPOPを使って、キューの右側（LPUSHされた反対側）からデータを取り出して検証
-	redisClient->execCommandAsync(
-		[&redisProm](const drogon::nosql::RedisResult& r) {
-			if (r.isNil()) {
-				redisProm.set_value(std::nullopt);
-			} else {
-				redisProm.set_value(r.asString());
-			}
-		},
-		[&redisProm](const std::exception& e) {
-			redisProm.set_value(std::nullopt);
-		},
-		"RPOP encode_queue" // LPUSHされたIDを取り出す
-	);
-
-	auto poppedVideoId = redisFut.get();
-	REQUIRE(poppedVideoId.has_value());
-	CHECK(poppedVideoId.value() == videoId);
+	// Modal宛にPOSTされたか確認（最大3秒待機）
+	std::unique_lock<std::mutex> lock(g_modalMutex);
+	bool found = g_modalCv.wait_for(lock, std::chrono::seconds(3), [&]() {
+		return std::find(g_modalReceivedVideoIds.begin(),
+			g_modalReceivedVideoIds.end(), videoId)
+			!= g_modalReceivedVideoIds.end();
+		});
+	CHECK(found);
+	// 確認後クリーンアップ
+	auto it = std::find(g_modalReceivedVideoIds.begin(),
+		g_modalReceivedVideoIds.end(), videoId);
+	if (it != g_modalReceivedVideoIds.end())
+		g_modalReceivedVideoIds.erase(it);
 	// クリーンアップ
 	CHECK(deleteVideo(videoId) == true);
 }

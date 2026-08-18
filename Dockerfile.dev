@@ -13,7 +13,8 @@ COPY filters/ /app/filters/
 COPY plugins/ /app/plugins/
 COPY worker/ /app/worker/
 COPY config.json config.yaml /app/
-RUN mkdir build && cd build && cmake .. && make -j${BUILD_JOBS}
+
+RUN mkdir build && cd build && cmake .. -DBUILD_LOCAL_DEV=ON && make -j${BUILD_JOBS}
 
 FROM gcc:15.2
 ENV DEBIAN_FRONTEND=noninteractive
@@ -33,6 +34,7 @@ RUN ldconfig
 
 WORKDIR /app
 COPY config.json config.yaml /app/
+
 COPY --from=builder /app/build/playbacq /usr/local/bin/playbacq
 RUN chmod +x /usr/local/bin/playbacq
 COPY --from=builder /app/build/playbacq_worker /usr/local/bin/playbacq_worker

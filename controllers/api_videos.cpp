@@ -19,6 +19,7 @@
 #include "../models/VideoLikes.h"
 #include "../plugins/S3Plugin.h"
 #include "../plugins/Token.h"
+#include "../plugins/YoutubeAPI.h"
 #include "Status.h"
 
 using namespace api;
@@ -237,6 +238,97 @@ drogon::Task<drogon::HttpResponsePtr> videos::deleteVideo(HttpRequestPtr req) {
 		auto resp = drogon::HttpResponse::newHttpResponse();
 		resp->setStatusCode(drogon::HttpStatusCode::k500InternalServerError);
 		resp->setBody("Failed to delete video: " + std::string(e.what()));
+		co_return resp;
+	}
+}
+
+drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
+	auto jsonPtr = req->getJsonObject();
+	if (!jsonPtr) {
+		auto resp = drogon::HttpResponse::newHttpResponse();
+		resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+		resp->setBody("Invalid JSON format");
+		co_return resp;
+	}
+	try {
+		drogon_model::playbacq::Videos newVideo;
+		std::string videoId = drogon::utils::genRandomString(11);
+		newVideo.setVideoId(videoId);
+		newVideo.setCreatedAt(trantor::Date::now());
+		newVideo.setViewCount(0);
+		// JSONから動画情報を設定
+		newVideo.setIsExternal(1);
+		// URLからYoutubeの動画IDを抽出(将来的に別の動画サイトに対応する場合はここで判定する。)
+		const std::string videoUrl = jsonPtr->get("url", "").asString();
+		std::regex youtubeRegex(
+			R"(^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/|live\/))([\w-]{11})(?:\S+)?$)"
+		);
+		std::smatch match;
+		std::string youtubeID;
+		if (std::regex_match(videoUrl, match, youtubeRegex) && match.size() > 1) {
+			youtubeID = match[1].str();
+			newVideo.setVideoUrl(youtubeID);
+		} else {
+			auto resp = drogon::HttpResponse::newHttpResponse();
+			resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+			resp->setBody("Invalid YouTube URL");
+			co_return resp;
+		}
+		newVideo.setThumbnailUrl("https://img.youtube.com/vi/" + youtubeID + "/hqdefault.jpg");
+		// Youtube APIを使って動画情報を取得する。
+		const char* apiKeyEnv = std::getenv("YOUTUBE_API_KEY");
+		if (apiKeyEnv == nullptr) {
+			auto resp = drogon::HttpResponse::newHttpResponse();
+			resp->setStatusCode(drogon::HttpStatusCode::k500InternalServerError);
+			resp->setBody("YouTube API key is not set");
+			co_return resp;
+		}
+		const std::string apiKey = (apiKeyEnv != nullptr) ? std::string(apiKeyEnv) : "";
+		auto videoInfoRaw = co_await YoutubeAPI::fetchVideoInfo(youtubeID, apiKey);
+		if (!videoInfoRaw) {
+			auto resp = drogon::HttpResponse::newHttpResponse();
+			resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+			resp->setBody("Failed to fetch video info from YouTube API");
+			co_return resp;
+		}
+		const Json::Value videoInfo = videoInfoRaw.value();
+		// 現時点ではYoutubeのみ対応
+		if (videoInfo.get("isLive", false).asBool() || videoInfo.get("isUpcoming", false).asBool()) {
+			newVideo.setType("youtube live");
+		} else {
+			newVideo.setType("youtube");
+		}
+		// titleが空ならデフォルト値を設定する。
+		if (!jsonPtr->isMember("title") || jsonPtr->get("title", "").asString().empty()) {
+			newVideo.setTitle(videoInfo.get("title", "NULL").asString());
+		} else {
+			newVideo.setTitle(jsonPtr->get("title", "NULL").asString());
+		}
+		// descriptionが空ならデフォルト値を設定する。
+		if (!jsonPtr->isMember("description") || jsonPtr->get("description", "").asString().empty()) {
+			newVideo.setDescription(videoInfo.get("description", "NULL").asString());
+		} else {
+			newVideo.setDescription(jsonPtr->get("description", "NULL").asString());
+		}
+		// 動画の長さをYoutubeから取得する。
+		newVideo.setDuration(videoInfo.get("duration", 0).asInt());
+
+		newVideo.setUserId(req->getAttributes()->get<std::string>("userId"));
+		newVideo.setStatus((uint8_t)Status::completed);
+
+		drogon::orm::CoroMapper<drogon_model::playbacq::Videos> mapper(drogon::app().getDbClient());
+		co_await mapper.insert(newVideo);
+
+		Json::Value jsonResponse = newVideo.toJson();
+		auto resp = drogon::HttpResponse::newHttpJsonResponse(jsonResponse);
+		resp->setStatusCode(drogon::HttpStatusCode::k201Created);
+		co_return resp;
+	}
+	catch (const std::exception& e) {
+		std::cerr << "Error: " << e.what() << std::endl;
+		auto resp = drogon::HttpResponse::newHttpResponse();
+		resp->setStatusCode(drogon::HttpStatusCode::k500InternalServerError);
+		resp->setBody("Failed to create video: " + std::string(e.what()));
 		co_return resp;
 	}
 }

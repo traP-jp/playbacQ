@@ -110,6 +110,49 @@ paths:
         "404":
           description: "動画が見つかりませんでした。"
 
+  /api/ex-videos:
+    post:
+      summary: "外部動画を取り込む"
+      description: "外部動画サービスから動画を取り込みます。titleやdescriptionを省略した場合は、外部サービスから取得した情報を使用します。現在はYoutubeのみサポートされています。"
+      operationId: importExternalVideo
+      x-tested: false
+      tags:
+        - Video
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - url
+              properties:
+                title:
+                  type: string
+                  description: "動画のタイトル"
+                  example: "還月 / 2026年度 春ハッカソン 24班"
+                description:
+                  type: string
+                  description: "動画の説明"
+                  example: "2026年度 春ハッカソン 24班の動画です。"
+                url:
+                  type: string
+                  description: "動画のリンク"
+                  example: "https://youtu.be/fV04ZVNpfIk"
+      responses:
+        "201":
+          description: "動画が作成されました。"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+        "400":
+          description: "リクエストが不正です。"
+        "403":
+          description: "アクセスが拒否されました。"
+        "500":
+          description: "サーバー内部エラー"
+
   /api/videos/{id}:
     get:
       summary: "動画の取得"
@@ -976,11 +1019,11 @@ components:
           type: string
           readOnly: true
           description: "動画の説明"
-        url:
+        video_url:
           type: string
           readOnly: true
           description: "動画の公開用URL"
-        thumbnailUrl:
+        thumbnail_url:
           type: string
           readOnly: true
           description: "動画の公開用サムネイルURL"
@@ -992,10 +1035,30 @@ components:
           type: string
           readOnly: true
           description: "動画のサムネイルアップロード用URL"
-        viewCount:
+        user_id:
+          type: string
+          readOnly: true
+          description: "動画を投稿したユーザーのID"
+        type:
+          type: string
+          readOnly: true
+          description: "動画の種類(youtube, youtube live , internal)"
+        view_count:
           type: integer
           readOnly: true
           description: "動画の再生回数"
+        like_count:
+          type: integer
+          readOnly: true
+          description: "動画のいいね数"
+        status:
+          type: integer
+          readOnly: true
+          description: "動画の状態(pending, processing, completed, failed)"
+        is_external:
+          type: boolean
+          readOnly: true
+          description: "外部動画かどうか"
         duration:
           type: number
           readOnly: true

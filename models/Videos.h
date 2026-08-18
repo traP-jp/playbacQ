@@ -55,6 +55,8 @@ class Videos
         static const std::string _duration;
         static const std::string _like_count;
         static const std::string _status;
+        static const std::string _is_external;
+        static const std::string _type;
     };
 
     static const int primaryKeyNumber;
@@ -204,8 +206,25 @@ class Videos
     ///Set the value of the column status
     void setStatus(const uint8_t &pStatus) noexcept;
 
+    /**  For column is_external  */
+    ///Get the value of the column is_external, returns the default value if the column is null
+    const uint8_t &getValueOfIsExternal() const noexcept;
+    ///Return a shared_ptr object pointing to the column const value, or an empty shared_ptr object if the column is null
+    const std::shared_ptr<uint8_t> &getIsExternal() const noexcept;
+    ///Set the value of the column is_external
+    void setIsExternal(const uint8_t &pIsExternal) noexcept;
 
-    static size_t getColumnNumber() noexcept {  return 11;  }
+    /**  For column type  */
+    ///Get the value of the column type, returns the default value if the column is null
+    const std::string &getValueOfType() const noexcept;
+    ///Return a shared_ptr object pointing to the column const value, or an empty shared_ptr object if the column is null
+    const std::shared_ptr<std::string> &getType() const noexcept;
+    ///Set the value of the column type
+    void setType(const std::string &pType) noexcept;
+    void setType(std::string &&pType) noexcept;
+
+
+    static size_t getColumnNumber() noexcept {  return 13;  }
     static const std::string &getColumnName(size_t index) noexcept(false);
 
     Json::Value toJson() const;
@@ -238,6 +257,8 @@ class Videos
     std::shared_ptr<int32_t> duration_;
     std::shared_ptr<int32_t> likeCount_;
     std::shared_ptr<uint8_t> status_;
+    std::shared_ptr<uint8_t> isExternal_;
+    std::shared_ptr<std::string> type_;
     struct MetaData
     {
         const std::string colName_;
@@ -249,7 +270,7 @@ class Videos
         const bool notNull_;
     };
     static const std::vector<MetaData> metaData_;
-    bool dirtyFlag_[11]={ false };
+    bool dirtyFlag_[13]={ false };
   public:
     static const std::string &sqlForFindingByPrimaryKey()
     {
@@ -324,6 +345,18 @@ class Videos
         sql += "status,";
         ++parametersCount;
         if(!dirtyFlag_[10])
+        {
+            needSelection=true;
+        }
+        sql += "is_external,";
+        ++parametersCount;
+        if(!dirtyFlag_[11])
+        {
+            needSelection=true;
+        }
+        sql += "type,";
+        ++parametersCount;
+        if(!dirtyFlag_[12])
         {
             needSelection=true;
         }
@@ -402,6 +435,24 @@ class Videos
             sql +="default,";
         }
         if(dirtyFlag_[10])
+        {
+            sql.append("?,");
+
+        }
+        else
+        {
+            sql +="default,";
+        }
+        if(dirtyFlag_[11])
+        {
+            sql.append("?,");
+
+        }
+        else
+        {
+            sql +="default,";
+        }
+        if(dirtyFlag_[12])
         {
             sql.append("?,");
 
