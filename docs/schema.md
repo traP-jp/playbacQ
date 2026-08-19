@@ -3,8 +3,8 @@
 ```mermaid
 erDiagram  
   videos {
-	varchar(255) video_id PK
-	varchar(32) user_id FK
+	varchar video_id PK
+	varchar user_id FK
 	text title
 	text description
 	text thumbnail_url
@@ -15,11 +15,13 @@ erDiagram
 	int like_count
 	int comment_count
 	TINYINT status
+	TINYINT is_external
+	varchar type
   }
   comments {
 	int comment_id PK
-	varchar(255) video_id FK
-	varchar(32) user_id FK
+	varchar video_id FK
+	varchar user_id FK
 	text comment
 	double timestamp
 	datetime created_at
@@ -28,18 +30,18 @@ erDiagram
   }
 
   video_likes {
-	varchar(255) video_id PK,FK
-	varchar(32) user_id PK,FK
+	varchar video_id PK,FK
+	varchar user_id PK,FK
 	datetime created_at
   }
   
   tags {
 	int tag_id PK
-	varchar(32) name
+	varchar name
   }
 
   video_tags {
-	varchar(255) video_id PK,FK
+	varchar video_id PK,FK
 	int tag_id PK,FK
 	int status
   }
