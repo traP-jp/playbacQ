@@ -132,7 +132,7 @@ bool deleteFromMinIO(const std::string& bucket_name, const std::string& object_k
 #ifdef USE_INTERNAL_S3
 	const std::string minioEndpoint = envEndpoint ? "http://" + std::string(envEndpoint) : "http://minio:9000";
 #else
-	const std::string minioEndpoint = envEndpoint ? envEndpoint : "http://127.0.1:9000";
+	const std::string minioEndpoint = envEndpoint ? envEndpoint : "http://127.0.0.1:9000";
 #endif
 	Aws::Auth::AWSCredentials credentials(accessKey.c_str(), secretKey.c_str());
 	Aws::Client::ClientConfiguration clientConfig;
@@ -204,7 +204,7 @@ int main(int argc, char* argv[]) {
 			std::string minioEndpoint = envEndpoint ? "http://" + std::string(envEndpoint) : "http://minio:9000";
 #else
 			const char* envEndpoint = std::getenv("S3_ENDPOINT");
-			std::string minioEndpoint = envEndpoint ? envEndpoint : "http://127.0.1:9000";
+			std::string minioEndpoint = envEndpoint ? envEndpoint : "http://127.0.0.1:9000";
 #endif
 			std::cout << "Using MinIO endpoint: " << minioEndpoint << std::endl;
 
@@ -278,12 +278,30 @@ int main(int argc, char* argv[]) {
 				std::filesystem::create_directories(base_dir);
 
 				boost::process::ipstream output_stream;
+				// サムネ画像の時間
+				int thumb_time = std::min(4, static_cast<int>(total_duration_sec / 2));
+				std::string filter_complex = std::format(
+					"[0:v]split=3[v_hls_in][v_seek_in][v_thumb_in];"
+					"[v_hls_in]scale='trunc(min(1920,iw)/2)*2':'trunc(min(1080,ih)/2)*2':force_original_aspect_ratio=decrease,pad='ceil(max(iw,ih*(16/9))/2)*2':'ceil(max(ih,iw*(9/16))/2)*2':(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[v_hls_out];"
+					"[v_seek_in]fps=1/{0},scale=160:90:force_original_aspect_ratio=decrease,pad=160:90:(ow-iw)/2:(oh-ih)/2:black,tile=10x10[v_seek_out];"
+					"[v_thumb_in]select='gte(t\\,{1})',scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[v_thumb_out]",
+					interval,
+					thumb_time
+				);
 				std::vector<std::string> args = {
 					#ifdef USE_NVIDIA_ENCODER
 					"-hwaccel", "cuda",
 					#endif
+					"-reconnect", "1",
+					"-reconnect_at_eof", "1",
+					"-reconnect_streamed", "1",
+					"-reconnect_delay_max", "5",
 					"-i", video_url,
 					"-progress", "pipe:1",
+					"-filter_complex", filter_complex,
+					// HLS出力設定
+					"-map", "[v_hls_out]",
+					"-map", "0:a?",
 					#ifdef USE_NVIDIA_ENCODER
 					"-c:v", "h264_nvenc",
 					"-preset", "p4",
@@ -291,7 +309,7 @@ int main(int argc, char* argv[]) {
 					#else
 					"-c:v", "libx264",
 					#endif
-					"-vf", "scale='trunc(min(1920,iw)/2)*2':'trunc(min(1080,ih)/2)*2':force_original_aspect_ratio=decrease,pad='ceil(max(iw,ih*(16/9))/2)*2':'ceil(max(ih,iw*(9/16))/2)*2':(ow-iw)/2:(oh-ih)/2:black,format=yuv420p",
+					"-c:a", "aac",
 					"-g", "60",
 					"-sc_threshold", "0",
 					"-f", "hls",
@@ -302,6 +320,17 @@ int main(int argc, char* argv[]) {
 					"-hls_playlist_type", "vod",
 					"-hls_list_size", "0",
 					base_dir + "output.m3u8",
+					// シークバー用のサムネイル出力設定
+					"-map", "[v_seek_out]",
+					"-c:v", "mjpeg",
+					"-q:v", "2",
+					base_dir + "thumbnail%03d.jpg",
+					// サムネ画像の出力設定
+					"-map", "[v_thumb_out]",
+					"-frames:v", "1",
+					"-c:v", "mjpeg",
+					"-q:v", "2",
+					base_dir + "thumbnail.jpg"
 				};
 				std::cout << "Starting ffmpeg process for video ID: " << video_id << std::endl;
 				boost::process::child ffmpeg_process(ffmpeg_path,
@@ -338,63 +367,6 @@ int main(int argc, char* argv[]) {
 				} else {
 					std::cerr << "ffmpeg exited with code " << exit_code << " for video ID: " << video_id << std::endl;
 					// エラーが発生した場合はDrogonに失敗を知らせる (Pub/Sub)
-					postEncodeResult(video_id, "failed", "ffmpeg exited with code " + std::to_string(exit_code));
-					return 1;
-				}
-				// シークバー用のサムネ生成
-				std::vector<std::string> thumb_args = {
-					#ifdef USE_NVIDIA_ENCODER
-					"-hwaccel", "cuda",
-					#endif
-					"-progress", "pipe:1",
-					"-i", video_url,
-					"-vf", std::format("fps=1/{},scale=160:90:force_original_aspect_ratio=decrease,pad=160:90:(ow-iw)/2:(oh-ih)/2:black,tile=10x10", interval),
-					"-q:v", "2",
-					base_dir + "thumbnail%03d.jpg"
-				};
-				boost::process::ipstream output_thumb_stream;
-				boost::process::child ffmpeg_thumb(ffmpeg_path,
-					boost::process::args(thumb_args),
-					boost::process::std_in.close(),
-					boost::process::std_out > output_thumb_stream,
-					boost::process::std_err.close());
-				std::string thumb_line;
-				while (std::getline(output_thumb_stream, thumb_line)) {
-					std::cout << "[FFmpeg Thumbnail] " << thumb_line << std::endl;
-				}
-				ffmpeg_thumb.wait();
-				exit_code = ffmpeg_thumb.exit_code();
-				if (exit_code == 0) {
-					std::cout << "Thumbnail generation completed successfully for video ID: " << video_id << std::endl;
-				} else {
-					std::cerr << "ffmpeg exited with code " << exit_code << " for video ID: " << video_id << std::endl;
-					postEncodeResult(video_id, "failed", "ffmpeg exited with code " + std::to_string(exit_code));
-					return 1;
-				}
-				//TODO: 選択制にする
-				//ホンモノのサムネ生成
-				int thumb_time = std::min(4, static_cast<int>(total_duration_sec / 2));
-				std::vector<std::string> thumb_args2 = {
-					#ifdef USE_NVIDIA_ENCODER
-					"-hwaccel", "cuda",
-					#endif
-					"-ss", std::to_string(thumb_time),
-					"-i", video_url,
-					"-vf", "thumbnail,scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black",
-					"-frames:v", "1",
-					base_dir + "thumbnail.jpg"
-				};
-				boost::process::child ffmpeg_thumb2(ffmpeg_path,
-					boost::process::args(thumb_args2),
-					boost::process::std_in.close(),
-					boost::process::std_out.close(),
-					boost::process::std_err.close());
-				ffmpeg_thumb2.wait();
-				exit_code = ffmpeg_thumb2.exit_code();
-				if (exit_code == 0) {
-					std::cout << "High-quality thumbnail generation completed successfully for video ID: " << video_id << std::endl;
-				} else {
-					std::cerr << "ffmpeg exited with code " << exit_code << " for video ID: " << video_id << std::endl;
 					postEncodeResult(video_id, "failed", "ffmpeg exited with code " + std::to_string(exit_code));
 					return 1;
 				}

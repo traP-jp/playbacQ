@@ -4,6 +4,8 @@
 #include <drogon/orm/CoroMapper.h>
 #include <drogon/orm/Criteria.h>
 #include <json/json.h>
+#include <boost/process.hpp>
+#include <thread>
 #include "../models/Videos.h"
 #include "Status.h"
 
@@ -55,6 +57,17 @@ drogon::Task<drogon::HttpResponsePtr> minio::asyncHandleHttpRequest(HttpRequestP
                 video.setStatus((uint8_t)Status::processing);
                 co_await mapper.update(video);
                 std::cout << "Pushing video ID " << videoId << " to Modal" << std::endl;
+#ifdef USE_LOCAL_WORKER
+                std::thread([videoId]() {
+                    try {
+                        boost::process::child c("./build/playbacq_worker", videoId);
+                        c.detach();
+                    }
+                    catch (const std::exception& e) {
+                        std::cerr << "Error starting playbacq_worker for video ID " << videoId << ": " << e.what() << std::endl;
+                    }
+                    }).detach();
+#else
                 // Modalにpostする
                 const char* modalHost_env = std::getenv("MODAL_HOST");
                 std::string modalHost = modalHost_env ? modalHost_env : "http://localhost:9999";
@@ -76,6 +89,7 @@ drogon::Task<drogon::HttpResponsePtr> minio::asyncHandleHttpRequest(HttpRequestP
                 catch (const std::exception& e) {
                     std::cerr << "Error sending request to Modal: " << e.what() << std::endl;
                 }
+#endif
             }
             catch (const drogon::orm::DrogonDbException& e) {
                 std::cerr << "DB Error: " << e.base().what() << std::endl;
