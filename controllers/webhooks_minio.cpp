@@ -57,7 +57,7 @@ drogon::Task<drogon::HttpResponsePtr> minio::asyncHandleHttpRequest(HttpRequestP
                 video.setStatus((uint8_t)Status::processing);
                 co_await mapper.update(video);
                 std::cout << "Pushing video ID " << videoId << " to Modal" << std::endl;
-#ifdef USE_INTERNAL_S3
+#ifdef USE_LOCAL_WORKER
                 std::thread([videoId]() {
                     try {
                         boost::process::child c("./build/playbacq_worker", videoId);
