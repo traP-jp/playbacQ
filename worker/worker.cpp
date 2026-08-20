@@ -4,6 +4,7 @@
 #include <fstream>
 #include <cstdlib>
 #include <filesystem>
+#include <thread>
 #include <sw/redis++/redis++.h>
 #include <boost/process.hpp>
 #include <aws/core/Aws.h>
@@ -13,7 +14,19 @@
 #include <aws/core/auth/AWSCredentials.h>
 #include <curl/curl.h>
 
-#define USE_NVIDIA_ENCODER
+namespace {
+#ifdef USE_INTERNAL_S3
+constexpr bool USE_NVIDIA_VIDEO_ENCODER = false;
+constexpr const char* VIDEO_ENCODER = "libx264";
+constexpr const char* VIDEO_PRESET = "veryfast";
+constexpr const char* VIDEO_BITRATE = "";
+#else
+constexpr bool USE_NVIDIA_VIDEO_ENCODER = true;
+constexpr const char* VIDEO_ENCODER = "h264_nvenc";
+constexpr const char* VIDEO_PRESET = "p4";
+constexpr const char* VIDEO_BITRATE = "2M";
+#endif
+}
 
 bool upload2MinIO(const std::string& local_file_path, const std::string& bucket_name, const std::string& object_key) {
 	const char* envUser = std::getenv("MINIO_ROOT_USER");
@@ -168,11 +181,20 @@ std::string formatTime(int total_seconds) {
 
 int main(int argc, char* argv[]) {
 	if (argc != 2) {
-		std::cerr << "Usage: " << argv[0] << " <video_id>" << std::endl;
+		std::cerr << "Usage: " << argv[0] << " <video_id>|--show-encoder-config" << std::endl;
 		return 1;
 	}
 
 	std::string video_id = argv[1];
+	std::cout << "FFmpeg video encoder: " << VIDEO_ENCODER
+		<< ", preset: " << VIDEO_PRESET;
+	if (VIDEO_BITRATE[0] != '\0') {
+		std::cout << ", bitrate: " << VIDEO_BITRATE;
+	}
+	std::cout << std::endl;
+	if (video_id == "--show-encoder-config") {
+		return 0;
+	}
 
 	Aws::SDKOptions options;
 	Aws::InitAPI(options);
@@ -288,10 +310,11 @@ int main(int argc, char* argv[]) {
 					interval,
 					thumb_time
 				);
-				std::vector<std::string> args = {
-					#ifdef USE_NVIDIA_ENCODER
-					"-hwaccel", "cuda",
-					#endif
+				std::vector<std::string> args;
+				if (USE_NVIDIA_VIDEO_ENCODER) {
+					args.insert(args.end(), { "-hwaccel", "cuda" });
+				}
+				args.insert(args.end(), {
 					"-reconnect", "1",
 					"-reconnect_at_eof", "1",
 					"-reconnect_streamed", "1",
@@ -302,13 +325,13 @@ int main(int argc, char* argv[]) {
 					// HLS出力設定
 					"-map", "[v_hls_out]",
 					"-map", "0:a?",
-					#ifdef USE_NVIDIA_ENCODER
-					"-c:v", "h264_nvenc",
-					"-preset", "p4",
-					"-b:v", "2M",
-					#else
-					"-c:v", "libx264",
-					#endif
+					"-c:v", VIDEO_ENCODER,
+					"-preset", VIDEO_PRESET
+				});
+				if (VIDEO_BITRATE[0] != '\0') {
+					args.insert(args.end(), { "-b:v", VIDEO_BITRATE });
+				}
+				args.insert(args.end(), {
 					"-c:a", "aac",
 					"-g", "60",
 					"-sc_threshold", "0",
@@ -331,13 +354,20 @@ int main(int argc, char* argv[]) {
 					"-c:v", "mjpeg",
 					"-q:v", "2",
 					base_dir + "thumbnail.jpg"
-				};
+				});
 				std::cout << "Starting ffmpeg process for video ID: " << video_id << std::endl;
+				boost::process::ipstream error_stream;
 				boost::process::child ffmpeg_process(ffmpeg_path,
 					boost::process::args(args),
 					boost::process::std_in.close(),
 					boost::process::std_out > output_stream,
-					boost::process::std_err.close());
+					boost::process::std_err > error_stream);
+				std::thread error_reader([&error_stream]() {
+					std::string error_line;
+					while (std::getline(error_stream, error_line)) {
+						std::cerr << "[FFmpeg stderr] " << error_line << std::endl;
+					}
+				});
 				std::string line;
 				while (std::getline(output_stream, line)) {
 					std::cout << "[FFmpeg] " << line << std::endl;
@@ -361,6 +391,7 @@ int main(int argc, char* argv[]) {
 					}
 				}
 				ffmpeg_process.wait();
+				error_reader.join();
 				int exit_code = ffmpeg_process.exit_code();
 				if (exit_code == 0) {
 					std::cout << "Encoding completed successfully for video ID: " << video_id << std::endl;

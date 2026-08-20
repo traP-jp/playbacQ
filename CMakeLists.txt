@@ -70,9 +70,9 @@ if(BUILD_WORKER)
 
     if(BUILD_LOCAL_DEV)
         target_compile_definitions(playbacq_worker PRIVATE USE_INTERNAL_S3)
-    endif()
-    if(USE_LOCAL_WORKER)
-        target_compile_definitions(playbacq_worker PRIVATE USE_LOCAL_WORKER)
+        message(STATUS "Worker Encoder: CPU (libx264)")
+    else()
+        message(STATUS "Worker Encoder: GPU (h264_nvenc)")
     endif()
     message(STATUS "Configured to build: WORKER")
 endif()
@@ -111,6 +111,11 @@ if(BUILD_BACKEND)
         ${CMAKE_CURRENT_SOURCE_DIR}/models
         ${CMAKE_CURRENT_SOURCE_DIR}/plugins
     )
+
+    if(USE_LOCAL_WORKER)
+        target_compile_definitions(playbacq_core PRIVATE USE_LOCAL_WORKER)
+        message(STATUS "Worker Dispatch: LOCAL")
+    endif()
 
     add_executable(${PROJECT_NAME} main.cpp)
     target_compile_options(${PROJECT_NAME} PRIVATE

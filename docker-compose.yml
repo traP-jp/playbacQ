@@ -12,74 +12,89 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - DB_HOST=db
-      - REDIS_HOST=${REDIS_HOST}
-      - REDIS_PORT=${REDIS_PORT}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - REDIS_USER=${REDIS_USER}
-      - NS_MARIADB_USER=${NS_MARIADB_USER}
-      - NS_MARIADB_PASSWORD=${NS_MARIADB_PASSWORD}
-      - NS_MARIADB_DATABASE=${NS_MARIADB_DATABASE}
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
-      - S3_ENDPOINT=${S3_ENDPOINT}
-      - FRONTEND_URL=${FRONTEND_URL}
-      - BACKEND_URL=${BACKEND_URL}
-      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+      NS_MARIADB_HOSTNAME: ${NS_MARIADB_HOSTNAME:-db}
+      NS_MARIADB_PORT: ${NS_MARIADB_PORT:-3306}
+      NS_MARIADB_DATABASE: ${NS_MARIADB_DATABASE:-playbacq}
+      NS_MARIADB_USER: ${NS_MARIADB_USER:-playbacq_user}
+      NS_MARIADB_PASSWORD: ${NS_MARIADB_PASSWORD:-my_secure_password_123}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_USER: ${REDIS_USER:-default}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-super_secret_minio}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://127.0.0.1:9000}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:4200}
+      BACKEND_URL: ${BACKEND_URL:-http://backend:8080}
+      LOCAL_WORKER_EXECUTABLE: ${LOCAL_WORKER_EXECUTABLE:-./build/playbacq_worker}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
     depends_on:
-      - db
-      - redis
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu, video]
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
   db:
     image: mysql:8.0
     environment:
-      - MYSQL_DATABASE=${NS_MARIADB_DATABASE}
-      - MYSQL_USER=${NS_MARIADB_USER}
-      - MYSQL_PASSWORD=${NS_MARIADB_PASSWORD}
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${NS_MARIADB_DATABASE:-playbacq}
+      MYSQL_USER: ${NS_MARIADB_USER:-playbacq_user}
+      MYSQL_PASSWORD: ${NS_MARIADB_PASSWORD:-my_secure_password_123}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-super_secret_root}
     volumes:
       - db_data:/var/lib/mysql
       - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
       - "3306:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-      - MINIO_NOTIFY_WEBHOOK_ENABLE_1=on
-      - MINIO_NOTIFY_WEBHOOK_ENDPOINT_1=http://backend:8080/webhooks/minio
-      - MINIO_API_CORS_ALLOW_ORIGIN=http://localhost:4200
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-super_secret_minio}
+      MINIO_NOTIFY_WEBHOOK_ENABLE_1: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_1: http://backend:8080/webhooks/minio
+      MINIO_API_CORS_ALLOW_ORIGIN: ${FRONTEND_URL:-http://localhost:4200}
     ports:
       - "9000:9000" # API用
       - "9001:9001" # コンソール用
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   minio-init:
     image: minio/mc:latest
-    container_name: minio-init
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     environment:
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-super_secret_minio}
     volumes:
-      - ./docker/minio/init.sh:/init.sh
-    entrypoint: /bin/sh -c "chmod +x /init.sh && /init.sh"
+      - ./docker/minio/init.sh:/init.sh:ro
+    entrypoint: ["/bin/sh", "/init.sh"]
 volumes:
   db_data:
   redis_data:

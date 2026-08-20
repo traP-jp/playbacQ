@@ -1,0 +1,8 @@
+services:
+  backend:
+    build:
+      target: development
+    command: ["/bin/sh", "/app/docker/dev/start.sh"]
+    environment:
+      LOCAL_BUILD_JOBS: ${LOCAL_BUILD_JOBS:-6}
+      LOCAL_START_TIMEOUT: ${LOCAL_START_TIMEOUT:-600}
