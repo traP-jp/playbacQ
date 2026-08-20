@@ -95,6 +95,12 @@ CMake Toolsから実行する場合は`make local-dev`を実行せず`docker com
 
 ### 補助コマンド
 
+サービスの稼働状況、ローカルCPU/GPUモード、エンコーダー設定を表示します。
+
+```bash
+make local-dev-status
+```
+
 バックエンドのログを表示します。
 
 ```bash
