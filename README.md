@@ -18,6 +18,10 @@
 * **Others**: AWS SDK for C++ (S3 Plugin)
 
 ## 環境構築
+```
+docker compose up -d
+```
+
 `.env`は`.env.example`を参考に設定
 
 ## 実行
@@ -107,7 +111,7 @@ make local-dev-status
 make local-dev-logs
 ```
 
-開発用コンテナのシェルを開きます。。
+開発用コンテナのシェルを開きます。
 
 ```bash
 make local-dev-shell
