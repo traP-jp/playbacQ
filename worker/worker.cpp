@@ -17,16 +17,16 @@
 #include <curl/curl.h>
 
 namespace {
-#ifdef USE_INTERNAL_S3
-constexpr bool USE_NVIDIA_VIDEO_ENCODER = false;
-constexpr const char* VIDEO_ENCODER = "libx264";
-constexpr const char* VIDEO_PRESET = "veryfast";
-constexpr const char* VIDEO_BITRATE = "";
-#else
+#ifdef USE_NVIDIA_ENCODER
 constexpr bool USE_NVIDIA_VIDEO_ENCODER = true;
 constexpr const char* VIDEO_ENCODER = "h264_nvenc";
 constexpr const char* VIDEO_PRESET = "p4";
 constexpr const char* VIDEO_BITRATE = "2M";
+#else
+constexpr bool USE_NVIDIA_VIDEO_ENCODER = false;
+constexpr const char* VIDEO_ENCODER = "libx264";
+constexpr const char* VIDEO_PRESET = "veryfast";
+constexpr const char* VIDEO_BITRATE = "";
 #endif
 }
 

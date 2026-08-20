@@ -21,6 +21,18 @@
 `.env`は`.env.example`を参考に設定
 
 ## 実行
+```
+mkdir build
+cd build
+cmake ..
+make
+./playbacq
+```
+または
+
+VSCodeでCMake Toolsを使用してビルド+実行。
+
+## ローカル
 
 ### `make local-dev`
 
@@ -38,6 +50,7 @@ make local-dev
 4. `./build/playbacq`を起動
 5. バックエンドの8080番ポートが利用可能になるまで待機
 
+エンコードにはCPUを使用します。GPUを使用する場合は補助コマンドを利用する。
 
 ### 手動
 
@@ -98,4 +111,10 @@ make local-dev-shell
 
 ```bash
 make local-dev-down
+```
+
+ローカルでもNVIDIA GPUを使用してエンコードする場合は、次のコマンドを使用します。
+
+```bash
+make local-dev-gpu
 ```

@@ -2,6 +2,7 @@
 
 build_dir=${LOCAL_BUILD_DIR:-/app/build}
 build_jobs=${LOCAL_BUILD_JOBS:-6}
+gpu_encoder=${LOCAL_GPU_ENCODER:-OFF}
 backend_pid=""
 pid_file=/tmp/playbacq-backend.pid
 failure_file=/tmp/playbacq-local-start-failed
@@ -27,7 +28,7 @@ stop_backend() {
 trap stop_backend INT TERM
 rm -f "$pid_file" "$failure_file"
 
-if ! cmake -S /app -B "$build_dir" -DBUILD_LOCAL_DEV=ON -DUSE_LOCAL_WORKER=ON; then
+if ! cmake -S /app -B "$build_dir" -DBUILD_LOCAL_DEV=ON -DUSE_LOCAL_WORKER=ON -DUSE_LOCAL_GPU_ENCODER="$gpu_encoder"; then
     record_failure "Local configure failed."
     keep_container_running
 fi

@@ -1,0 +1,6 @@
+services:
+  backend:
+    gpus: all
+    environment:
+      LOCAL_GPU_ENCODER: "ON"
+      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
