@@ -4,6 +4,8 @@
 #include <fstream>
 #include <cstdlib>
 #include <filesystem>
+#include <algorithm>
+#include <stdexcept>
 #include <thread>
 #include <sw/redis++/redis++.h>
 #include <boost/process.hpp>
@@ -231,6 +233,18 @@ int main(int argc, char* argv[]) {
 			std::cout << "Using MinIO endpoint: " << minioEndpoint << std::endl;
 
 			std::cout << "\n[JOB RECEIVED] Video ID: " << video_id << std::endl;
+			int last_notified_percent = -1;
+			auto updateProgress = [&](int progress) {
+				progress = std::clamp(progress, 0, 100);
+				if (progress <= last_notified_percent) {
+					return;
+				}
+				redis.set("video:progress:" + video_id, std::to_string(progress), std::chrono::hours(24));
+				last_notified_percent = progress;
+				std::cout << "Progress updated: " << progress << "% for video ID: " << video_id << std::endl;
+			};
+			updateProgress(0);
+
 			const char* envMinIOUser = std::getenv("MINIO_ROOT_USER");
 			const char* envMinIOPassword = std::getenv("MINIO_ROOT_PASSWORD");
 			std::string accessKey = envMinIOUser ? envMinIOUser : "";
@@ -270,6 +284,9 @@ int main(int argc, char* argv[]) {
 					total_duration_sec = std::stod(duration_str);
 				}
 				probe_c.wait();
+				if (probe_c.exit_code() != 0) {
+					throw std::runtime_error("ffprobe exited with code " + std::to_string(probe_c.exit_code()));
+				}
 
 				if (total_duration_sec <= 0.0) {
 					std::cerr << "Invalid video duration: " << total_duration_sec << " seconds for video ID: " << video_id << std::endl;
@@ -283,7 +300,6 @@ int main(int argc, char* argv[]) {
 				return 1;
 			}
 
-			int last_notified_percent = -1;
 			std::string base_dir = "/tmp/playbacq_encode/" + video_id + "/";
 			int interval = 10; // サムネイルを10秒ごとに生成
 			if (total_duration_sec < 600) {
@@ -299,17 +315,8 @@ int main(int argc, char* argv[]) {
 				}
 				std::filesystem::create_directories(base_dir);
 
+				// HLSエンコードを独立させ、タイル生成待ちの影響を受けない進捗を取得する。
 				boost::process::ipstream output_stream;
-				// サムネ画像の時間
-				int thumb_time = std::min(4, static_cast<int>(total_duration_sec / 2));
-				std::string filter_complex = std::format(
-					"[0:v]split=3[v_hls_in][v_seek_in][v_thumb_in];"
-					"[v_hls_in]scale='trunc(min(1920,iw)/2)*2':'trunc(min(1080,ih)/2)*2':force_original_aspect_ratio=decrease,pad='ceil(max(iw,ih*(16/9))/2)*2':'ceil(max(ih,iw*(9/16))/2)*2':(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[v_hls_out];"
-					"[v_seek_in]fps=1/{0},scale=160:90:force_original_aspect_ratio=decrease,pad=160:90:(ow-iw)/2:(oh-ih)/2:black,tile=10x10[v_seek_out];"
-					"[v_thumb_in]select='gte(t\\,{1})',scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[v_thumb_out]",
-					interval,
-					thumb_time
-				);
 				std::vector<std::string> args;
 				if (USE_NVIDIA_VIDEO_ENCODER) {
 					args.insert(args.end(), { "-hwaccel", "cuda" });
@@ -321,12 +328,11 @@ int main(int argc, char* argv[]) {
 					"-reconnect_delay_max", "5",
 					"-i", video_url,
 					"-progress", "pipe:1",
-					"-filter_complex", filter_complex,
-					// HLS出力設定
-					"-map", "[v_hls_out]",
+					"-map", "0:v:0",
 					"-map", "0:a?",
 					"-c:v", VIDEO_ENCODER,
-					"-preset", VIDEO_PRESET
+					"-preset", VIDEO_PRESET,
+					"-vf", "scale='trunc(min(1920,iw)/2)*2':'trunc(min(1080,ih)/2)*2':force_original_aspect_ratio=decrease,pad='ceil(max(iw,ih*(16/9))/2)*2':'ceil(max(ih,iw*(9/16))/2)*2':(ow-iw)/2:(oh-ih)/2:black,format=yuv420p"
 				});
 				if (VIDEO_BITRATE[0] != '\0') {
 					args.insert(args.end(), { "-b:v", VIDEO_BITRATE });
@@ -342,20 +348,9 @@ int main(int argc, char* argv[]) {
 					// ---ストリーミング再生ならここまでで良い。---
 					"-hls_playlist_type", "vod",
 					"-hls_list_size", "0",
-					base_dir + "output.m3u8",
-					// シークバー用のサムネイル出力設定
-					"-map", "[v_seek_out]",
-					"-c:v", "mjpeg",
-					"-q:v", "2",
-					base_dir + "thumbnail%03d.jpg",
-					// サムネ画像の出力設定
-					"-map", "[v_thumb_out]",
-					"-frames:v", "1",
-					"-c:v", "mjpeg",
-					"-q:v", "2",
-					base_dir + "thumbnail.jpg"
+					base_dir + "output.m3u8"
 				});
-				std::cout << "Starting ffmpeg process for video ID: " << video_id << std::endl;
+				std::cout << "Starting HLS ffmpeg process for video ID: " << video_id << std::endl;
 				boost::process::ipstream error_stream;
 				boost::process::child ffmpeg_process(ffmpeg_path,
 					boost::process::args(args),
@@ -373,20 +368,16 @@ int main(int argc, char* argv[]) {
 					std::cout << "[FFmpeg] " << line << std::endl;
 					if (line.starts_with("out_time_us=")) {
 						try {
-							// "out_time_us="以降の数値を取得
-							long long micro_seconds = std::stoll(line.substr(12));
-							double current_sec = micro_seconds / 1000000.0;
-							int current_percent = std::min(static_cast<int>((current_sec / total_duration_sec) * 100), 100);
-
-							if (current_percent > last_notified_percent) {
-								// SET video:progress:{id} {percent} (有効期限24時間)
-								redis.set("video:progress:" + video_id, std::to_string(current_percent), std::chrono::hours(24));
-								last_notified_percent = current_percent;
-								std::cout << "Progress updated: " << current_percent << "% for video ID: " << video_id << std::endl;
-							}
+							const long long micro_seconds = std::stoll(line.substr(12));
+							const double current_sec = micro_seconds / 1000000.0;
+							const int current_percent = std::min(
+								static_cast<int>((current_sec / total_duration_sec) * 100.0),
+								99
+							);
+							updateProgress(current_percent);
 						}
-						catch (const std::exception& e) {
-							// パース失敗時 (out_time_us=N/A などが来た場合) は無視して続行
+						catch (const std::exception&) {
+							// out_time_us=N/Aなどの値は無視して続行する。
 						}
 					}
 				}
@@ -394,13 +385,95 @@ int main(int argc, char* argv[]) {
 				error_reader.join();
 				int exit_code = ffmpeg_process.exit_code();
 				if (exit_code == 0) {
-					std::cout << "Encoding completed successfully for video ID: " << video_id << std::endl;
+					std::cout << "HLS encoding completed successfully for video ID: " << video_id << std::endl;
 				} else {
 					std::cerr << "ffmpeg exited with code " << exit_code << " for video ID: " << video_id << std::endl;
-					// エラーが発生した場合はDrogonに失敗を知らせる (Pub/Sub)
 					postEncodeResult(video_id, "failed", "ffmpeg exited with code " + std::to_string(exit_code));
 					return 1;
 				}
+
+				// シークバー用サムネイルを別プロセスで生成する。
+				std::vector<std::string> seek_thumbnail_args;
+				if (USE_NVIDIA_VIDEO_ENCODER) {
+					seek_thumbnail_args.insert(seek_thumbnail_args.end(), { "-hwaccel", "cuda" });
+				}
+				seek_thumbnail_args.insert(seek_thumbnail_args.end(), {
+					"-reconnect", "1",
+					"-reconnect_at_eof", "1",
+					"-reconnect_streamed", "1",
+					"-reconnect_delay_max", "5",
+					"-i", video_url,
+					"-progress", "pipe:1",
+					"-vf", std::format("fps=1/{},scale=160:90:force_original_aspect_ratio=decrease,pad=160:90:(ow-iw)/2:(oh-ih)/2:black,tile=10x10", interval),
+					"-q:v", "2",
+					base_dir + "thumbnail%03d.jpg"
+				});
+				boost::process::ipstream seek_thumbnail_output;
+				boost::process::ipstream seek_thumbnail_error;
+				boost::process::child seek_thumbnail_process(ffmpeg_path,
+					boost::process::args(seek_thumbnail_args),
+					boost::process::std_in.close(),
+					boost::process::std_out > seek_thumbnail_output,
+					boost::process::std_err > seek_thumbnail_error);
+				std::thread seek_thumbnail_error_reader([&seek_thumbnail_error]() {
+					std::string error_line;
+					while (std::getline(seek_thumbnail_error, error_line)) {
+						std::cerr << "[FFmpeg Thumbnail stderr] " << error_line << std::endl;
+					}
+				});
+				std::string seek_thumbnail_line;
+				while (std::getline(seek_thumbnail_output, seek_thumbnail_line)) {
+					std::cout << "[FFmpeg Thumbnail] " << seek_thumbnail_line << std::endl;
+				}
+				seek_thumbnail_process.wait();
+				seek_thumbnail_error_reader.join();
+				exit_code = seek_thumbnail_process.exit_code();
+				if (exit_code != 0) {
+					std::cerr << "Thumbnail ffmpeg exited with code " << exit_code << " for video ID: " << video_id << std::endl;
+					postEncodeResult(video_id, "failed", "thumbnail ffmpeg exited with code " + std::to_string(exit_code));
+					return 1;
+				}
+				std::cout << "Thumbnail generation completed successfully for video ID: " << video_id << std::endl;
+
+				// 代表サムネイルを別プロセスで生成する。
+				const int thumb_time = std::min(4, static_cast<int>(total_duration_sec / 2));
+				std::vector<std::string> representative_thumbnail_args;
+				if (USE_NVIDIA_VIDEO_ENCODER) {
+					representative_thumbnail_args.insert(representative_thumbnail_args.end(), { "-hwaccel", "cuda" });
+				}
+				representative_thumbnail_args.insert(representative_thumbnail_args.end(), {
+					"-reconnect", "1",
+					"-reconnect_at_eof", "1",
+					"-reconnect_streamed", "1",
+					"-reconnect_delay_max", "5",
+					"-ss", std::to_string(thumb_time),
+					"-i", video_url,
+					"-vf", "thumbnail,scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black",
+					"-frames:v", "1",
+					base_dir + "thumbnail.jpg"
+				});
+				boost::process::ipstream representative_thumbnail_error;
+				boost::process::child representative_thumbnail_process(ffmpeg_path,
+					boost::process::args(representative_thumbnail_args),
+					boost::process::std_in.close(),
+					boost::process::std_out.close(),
+					boost::process::std_err > representative_thumbnail_error);
+				std::thread representative_thumbnail_error_reader([&representative_thumbnail_error]() {
+					std::string error_line;
+					while (std::getline(representative_thumbnail_error, error_line)) {
+						std::cerr << "[FFmpeg Representative Thumbnail stderr] " << error_line << std::endl;
+					}
+				});
+				representative_thumbnail_process.wait();
+				representative_thumbnail_error_reader.join();
+				exit_code = representative_thumbnail_process.exit_code();
+				if (exit_code != 0) {
+					std::cerr << "Representative thumbnail ffmpeg exited with code " << exit_code << " for video ID: " << video_id << std::endl;
+					postEncodeResult(video_id, "failed", "representative thumbnail ffmpeg exited with code " + std::to_string(exit_code));
+					return 1;
+				}
+				std::cout << "Representative thumbnail generation completed successfully for video ID: " << video_id << std::endl;
+				updateProgress(100);
 			}
 			catch (const std::exception& e) {
 				std::cerr << "Encoding Error: " << e.what() << std::endl;
