@@ -207,6 +207,69 @@ DROGON_TEST(EditVideoTest)
 	CHECK(deleteVideo(videoId) == true);
 }
 
+DROGON_TEST(EditVideoMassAssignmentTest)
+{
+	std::optional<std::string> videoIdOpt = postVideo("変更されないタイトル", "変更されない説明");
+	REQUIRE(videoIdOpt.has_value());
+	const std::string videoId = videoIdOpt.value();
+
+	auto beforeResp = sendSyncRequest(drogon::Get, "/api/videos/" + videoId);
+	REQUIRE(beforeResp != nullptr);
+	REQUIRE(beforeResp->getStatusCode() == drogon::k200OK);
+	auto beforeJsonPtr = beforeResp->getJsonObject();
+	REQUIRE(beforeJsonPtr != nullptr);
+	const Json::Value beforeJson = *beforeJsonPtr;
+
+	const std::vector<std::pair<std::string, Json::Value>> protectedFields = {
+		{"video_id", "attacker-video"},
+		{"user_id", "otheruser"},
+		{"thumbnail_url", "https://example.com/example.png"},
+		{"video_url", "https://example.com/watch/attacker-video"},
+		{"created_at", "2008-04-23 00:31:07"},
+		{"view_count", 999999999},
+		{"duration", 8},
+		{"like_count", 999999999},
+		{"status", 2},
+		{"is_external", 1},
+		{"type", "youtube"},
+	};
+
+	for (const auto& [field, value] : protectedFields) {
+		Json::Value body;
+		body["title"] = "攻撃者が変更したタイトル";
+		body[field] = value;
+		auto resp = sendSyncRequest(drogon::Patch, "/api/videos/" + videoId, body);
+		REQUIRE(resp != nullptr);
+		CHECK(resp->getStatusCode() == drogon::k400BadRequest);
+	}
+
+	const std::vector<Json::Value> invalidBodies = {
+		Json::Value(Json::objectValue),
+		Json::Value(Json::arrayValue),
+		Json::Value(42),
+	};
+	for (const auto& body : invalidBodies) {
+		auto resp = sendSyncRequest(drogon::Patch, "/api/videos/" + videoId, body);
+		REQUIRE(resp != nullptr);
+		CHECK(resp->getStatusCode() == drogon::k400BadRequest);
+	}
+
+	Json::Value nonStringTitle;
+	nonStringTitle["title"] = 42;
+	auto invalidTypeResp = sendSyncRequest(drogon::Patch, "/api/videos/" + videoId, nonStringTitle);
+	REQUIRE(invalidTypeResp != nullptr);
+	CHECK(invalidTypeResp->getStatusCode() == drogon::k400BadRequest);
+
+	auto afterResp = sendSyncRequest(drogon::Get, "/api/videos/" + videoId);
+	REQUIRE(afterResp != nullptr);
+	REQUIRE(afterResp->getStatusCode() == drogon::k200OK);
+	auto afterJson = afterResp->getJsonObject();
+	REQUIRE(afterJson != nullptr);
+	CHECK(*afterJson == beforeJson);
+
+	CHECK(deleteVideo(videoId) == true);
+}
+
 DROGON_TEST(SearchTest)
 {
 	// 動画を投稿

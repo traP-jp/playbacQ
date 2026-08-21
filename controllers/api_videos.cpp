@@ -358,12 +358,22 @@ drogon::Task<drogon::HttpResponsePtr> videos::getVideo([[maybe_unused]] HttpRequ
 
 drogon::Task<drogon::HttpResponsePtr> videos::patchVideo([[maybe_unused]] HttpRequestPtr req, std::string id) {
 	auto jsonPtr = req->getJsonObject();
-	if (!jsonPtr) {
+	if (!jsonPtr || !jsonPtr->isObject() || jsonPtr->empty()) {
 		auto resp = drogon::HttpResponse::newHttpResponse();
 		resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
-		resp->setBody("Invalid JSON format");
+		resp->setBody("Request body must be a non-empty JSON object");
 		co_return resp;
 	}
+
+	for (const auto& key : jsonPtr->getMemberNames()) {
+		if ((key != "title" && key != "description") || !(*jsonPtr)[key].isString()) {
+			auto resp = drogon::HttpResponse::newHttpResponse();
+			resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+			resp->setBody("Only string fields 'title' and 'description' can be updated");
+			co_return resp;
+		}
+	}
+
 	drogon::orm::CoroMapper<drogon_model::playbacq::Videos> mapper(drogon::app().getDbClient());
 	try {
 		auto video = co_await mapper.findByPrimaryKey(id);
@@ -373,7 +383,12 @@ drogon::Task<drogon::HttpResponsePtr> videos::patchVideo([[maybe_unused]] HttpRe
 			resp->setBody("You are not the owner of this video");
 			co_return resp;
 		}
-		video.updateByJson(*jsonPtr);
+		if (jsonPtr->isMember("title")) {
+			video.setTitle((*jsonPtr)["title"].asString());
+		}
+		if (jsonPtr->isMember("description")) {
+			video.setDescription((*jsonPtr)["description"].asString());
+		}
 		co_await mapper.update(video);
 
 		auto resp = drogon::HttpResponse::newHttpJsonResponse(video.toJson());
