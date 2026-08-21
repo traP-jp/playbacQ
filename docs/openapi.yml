@@ -197,6 +197,8 @@ paths:
           application/json:
             schema:
               type: object
+              minProperties: 1
+              additionalProperties: false
               properties:
                 title:
                   type: string
