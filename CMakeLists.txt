@@ -41,6 +41,7 @@ option(BUILD_BACKEND "Build the backend executable" ON)
 option(BUILD_WORKER "Build the worker executable" ON)
 option(BUILD_LOCAL_DEV "Build for local development with MinIO" OFF)
 option(USE_LOCAL_WORKER "Use local worker for encoding" OFF)
+option(USE_LOCAL_GPU_ENCODER "Use the NVIDIA GPU encoder for local development" OFF)
 
 option(ENABLE_COVERAGE "Enable coverage reporting" OFF)
 if(ENABLE_COVERAGE)
@@ -71,8 +72,12 @@ if(BUILD_WORKER)
     if(BUILD_LOCAL_DEV)
         target_compile_definitions(playbacq_worker PRIVATE USE_INTERNAL_S3)
     endif()
-    if(USE_LOCAL_WORKER)
-        target_compile_definitions(playbacq_worker PRIVATE USE_LOCAL_WORKER)
+
+    if(NOT BUILD_LOCAL_DEV OR USE_LOCAL_GPU_ENCODER)
+        target_compile_definitions(playbacq_worker PRIVATE USE_NVIDIA_ENCODER)
+        message(STATUS "Worker Encoder: GPU (h264_nvenc)")
+    else()
+        message(STATUS "Worker Encoder: CPU (libx264)")
     endif()
     message(STATUS "Configured to build: WORKER")
 endif()
@@ -111,6 +116,13 @@ if(BUILD_BACKEND)
         ${CMAKE_CURRENT_SOURCE_DIR}/models
         ${CMAKE_CURRENT_SOURCE_DIR}/plugins
     )
+
+    if(USE_LOCAL_WORKER)
+        find_package(Boost REQUIRED COMPONENTS filesystem)
+        target_link_libraries(playbacq_core PUBLIC Boost::filesystem)
+        target_compile_definitions(playbacq_core PRIVATE USE_LOCAL_WORKER)
+        message(STATUS "Worker Dispatch: LOCAL")
+    endif()
 
     add_executable(${PROJECT_NAME} main.cpp)
     target_compile_options(${PROJECT_NAME} PRIVATE

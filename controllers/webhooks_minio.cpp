@@ -5,6 +5,9 @@
 #include <drogon/orm/Criteria.h>
 #include <json/json.h>
 #include <boost/process.hpp>
+#include <cstdlib>
+#include <filesystem>
+#include <stdexcept>
 #include <thread>
 #include "../models/Videos.h"
 #include "Status.h"
@@ -56,11 +59,27 @@ drogon::Task<drogon::HttpResponsePtr> minio::asyncHandleHttpRequest(HttpRequestP
                 auto video = co_await mapper.findByPrimaryKey(videoId);
                 video.setStatus((uint8_t)Status::processing);
                 co_await mapper.update(video);
-                std::cout << "Pushing video ID " << videoId << " to Modal" << std::endl;
+                std::cout << "Dispatching video ID " << videoId << " for encoding" << std::endl;
 #ifdef USE_LOCAL_WORKER
                 std::thread([videoId]() {
                     try {
-                        boost::process::child c("./build/playbacq_worker", videoId);
+                        const char* workerExecutableEnv = std::getenv("LOCAL_WORKER_EXECUTABLE");
+                        const std::string workerExecutable = workerExecutableEnv
+                            ? workerExecutableEnv
+                            : "./build/playbacq_worker";
+                        std::string resolvedWorkerExecutable = workerExecutable;
+                        if (!std::filesystem::exists(resolvedWorkerExecutable)) {
+                            const auto workerPath = boost::process::search_path(workerExecutable);
+                            if (!workerPath.empty()) {
+                                resolvedWorkerExecutable = workerPath.string();
+                            }
+                        }
+                        if (!std::filesystem::exists(resolvedWorkerExecutable)) {
+                            throw std::runtime_error("Local worker executable not found: " + workerExecutable);
+                        }
+                        std::cout << "Starting local worker " << resolvedWorkerExecutable
+                                  << " for video ID " << videoId << std::endl;
+                        boost::process::child c(resolvedWorkerExecutable, videoId);
                         c.detach();
                     }
                     catch (const std::exception& e) {

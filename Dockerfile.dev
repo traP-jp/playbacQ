@@ -1,9 +1,11 @@
-FROM unabc/playbacq-base:v2 AS builder
+FROM unabc/playbacq-base:v2 AS development
 # キャッシュバスター
 ENV FORCE_REBUILD_CACHE_BUST=1
 RUN ldconfig
-ARG BUILD_JOBS=12
 WORKDIR /app
+
+FROM development AS builder
+ARG BUILD_JOBS=12
 COPY CMakeLists.txt /app/
 COPY *.cpp /app/
 
@@ -14,7 +16,7 @@ COPY plugins/ /app/plugins/
 COPY worker/ /app/worker/
 COPY config.json config.yaml /app/
 
-RUN mkdir build && cd build && cmake .. -DBUILD_LOCAL_DEV=ON && make -j${BUILD_JOBS}
+RUN mkdir build && cd build && cmake .. -DBUILD_LOCAL_DEV=ON -DUSE_LOCAL_WORKER=ON && make -j${BUILD_JOBS}
 
 FROM gcc:15.2
 ENV DEBIAN_FRONTEND=noninteractive
@@ -33,6 +35,7 @@ COPY --from=builder /usr/lib/x86_64-linux-gnu/libboost_*.so* /usr/lib/x86_64-lin
 RUN ldconfig
 
 WORKDIR /app
+ENV LOCAL_WORKER_EXECUTABLE=/usr/local/bin/playbacq_worker
 COPY config.json config.yaml /app/
 
 COPY --from=builder /app/build/playbacq /usr/local/bin/playbacq
