@@ -5,6 +5,11 @@ elapsed=0
 pid_file=/tmp/playbacq-backend.pid
 failure_file=/tmp/playbacq-local-start-failed
 
+if ! command -v bash >/dev/null 2>&1; then
+    echo "bash is required to check whether the local backend is ready." >&2
+    exit 1
+fi
+
 while [ "$elapsed" -lt "$timeout" ]; do
     if [ -f "$failure_file" ]; then
         cat "$failure_file" >&2

@@ -118,6 +118,8 @@ if(BUILD_BACKEND)
     )
 
     if(USE_LOCAL_WORKER)
+        find_package(Boost REQUIRED COMPONENTS filesystem)
+        target_link_libraries(playbacq_core PUBLIC Boost::filesystem)
         target_compile_definitions(playbacq_core PRIVATE USE_LOCAL_WORKER)
         message(STATUS "Worker Dispatch: LOCAL")
     endif()

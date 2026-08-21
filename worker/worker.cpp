@@ -1,6 +1,5 @@
 #include <iostream>
 #include <string>
-#include <string_view>
 #include <chrono>
 #include <fstream>
 #include <cstdlib>
@@ -234,15 +233,26 @@ int main(int argc, char* argv[]) {
 			std::cout << "Using MinIO endpoint: " << minioEndpoint << std::endl;
 
 			std::cout << "\n[JOB RECEIVED] Video ID: " << video_id << std::endl;
-			int last_notified_percent = -1;
+			int last_attempted_percent = -1;
 			auto updateProgress = [&](int progress) {
 				progress = std::clamp(progress, 0, 100);
-				if (progress <= last_notified_percent) {
+				if (progress <= last_attempted_percent) {
 					return;
 				}
-				redis.set("video:progress:" + video_id, std::to_string(progress), std::chrono::hours(24));
-				last_notified_percent = progress;
-				std::cout << "Progress updated: " << progress << "% for video ID: " << video_id << std::endl;
+				last_attempted_percent = progress;
+				try {
+					redis.set("video:progress:" + video_id, std::to_string(progress), std::chrono::hours(24));
+					std::cout << "Progress updated: " << progress << "% for video ID: " << video_id << std::endl;
+				}
+				catch (const std::exception& e) {
+					// 進捗通知の失敗だけでエンコード処理を失敗させない。
+					std::cerr << "Progress update failed for video ID " << video_id
+						<< ": " << e.what() << std::endl;
+				}
+				catch (...) {
+					std::cerr << "Progress update failed for video ID " << video_id
+						<< ": unknown error" << std::endl;
+				}
 			};
 			updateProgress(0);
 
@@ -319,10 +329,12 @@ int main(int argc, char* argv[]) {
 				boost::process::ipstream output_stream;
 				const int thumb_time = std::min(4, static_cast<int>(total_duration_sec / 2));
 				const std::string filter_complex = std::format(
-					"[0:v]split=3[v_hls_in][v_seek_in][v_thumb_in];"
-					"[v_hls_in]scale='trunc(min(1920,iw)/2)*2':'trunc(min(1080,ih)/2)*2':force_original_aspect_ratio=decrease,pad='ceil(max(iw,ih*(16/9))/2)*2':'ceil(max(ih,iw*(9/16))/2)*2':(ow-iw)/2:(oh-ih)/2:black,format=yuv420p,showinfo[v_hls_out];"
+					"[0:v]split=4[v_hls_in][v_seek_in][v_thumb_in][v_progress_in];"
+					"[v_hls_in]scale='trunc(min(1920,iw)/2)*2':'trunc(min(1080,ih)/2)*2':force_original_aspect_ratio=decrease,pad='ceil(max(iw,ih*(16/9))/2)*2':'ceil(max(ih,iw*(9/16))/2)*2':(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[v_hls_out];"
 					"[v_seek_in]fps=1/{0},scale=160:90:force_original_aspect_ratio=decrease,pad=160:90:(ow-iw)/2:(oh-ih)/2:black,tile=10x10[v_seek_out];"
-					"[v_thumb_in]select='gte(t\\,{1})',scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[v_thumb_out]",
+					"[v_thumb_in]select='gte(t\\,{1})',scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black[v_thumb_out];"
+					"[v_progress_in]fps=1,scale=2:2,metadata=mode=add:key=playbacq_progress:value=1,"
+					"metadata=mode=print:key=playbacq_progress:file=/dev/stdout:direct=1[v_progress_out]",
 					interval,
 					thumb_time
 				);
@@ -336,7 +348,6 @@ int main(int argc, char* argv[]) {
 					"-reconnect_streamed", "1",
 					"-reconnect_delay_max", "5",
 					"-i", video_url,
-					"-progress", "pipe:1",
 					"-filter_complex", filter_complex,
 					// HLS出力設定
 					"-map", "[v_hls_out]",
@@ -369,7 +380,11 @@ int main(int argc, char* argv[]) {
 					"-frames:v", "1",
 					"-c:v", "mjpeg",
 					"-q:v", "2",
-					base_dir + "thumbnail.jpg"
+					base_dir + "thumbnail.jpg",
+					// 1秒ごとの進捗時刻を生成する軽量なnull出力
+					"-map", "[v_progress_out]",
+					"-f", "null",
+					"/dev/null"
 				});
 				std::cout << "Starting ffmpeg process for video ID: " << video_id << std::endl;
 				boost::process::ipstream error_stream;
@@ -378,33 +393,32 @@ int main(int argc, char* argv[]) {
 					boost::process::std_in.close(),
 					boost::process::std_out > output_stream,
 					boost::process::std_err > error_stream);
-				std::thread error_reader([&error_stream, &updateProgress, total_duration_sec]() {
+				std::thread error_reader([&error_stream]() {
 					std::string error_line;
 					while (std::getline(error_stream, error_line)) {
-						const std::size_t pts_position = error_line.find("pts_time:");
-						if (pts_position != std::string::npos) {
-							try {
-								const std::size_t value_start = pts_position + std::string_view("pts_time:").size();
-								const std::size_t value_end = error_line.find_first_of(" \t", value_start);
-								const double current_sec = std::stod(error_line.substr(value_start, value_end - value_start));
-								const int current_percent = std::min(
-									static_cast<int>((current_sec / total_duration_sec) * 100.0),
-									99
-								);
-								updateProgress(current_percent);
-							}
-							catch (const std::exception&) {
-								// showinfoの時刻を解析できない行は通常のstderrとして扱う。
-								std::cerr << "[FFmpeg stderr] " << error_line << std::endl;
-							}
-							continue;
-						}
 						std::cerr << "[FFmpeg stderr] " << error_line << std::endl;
 					}
 				});
 				std::string line;
 				while (std::getline(output_stream, line)) {
-					std::cout << "[FFmpeg] " << line << std::endl;
+					const std::size_t pts_position = line.find("pts_time:");
+					if (pts_position == std::string::npos) {
+						continue;
+					}
+					try {
+						const std::size_t value_start = pts_position + sizeof("pts_time:") - 1;
+						const std::size_t value_end = line.find_first_of(" \t", value_start);
+						const double current_sec = std::stod(line.substr(value_start, value_end - value_start));
+						const int current_percent = std::min(
+							static_cast<int>((current_sec / total_duration_sec) * 100.0),
+							99
+						);
+						updateProgress(current_percent);
+					}
+					catch (const std::exception& e) {
+						std::cerr << "Invalid FFmpeg progress line: " << line
+							<< " (" << e.what() << ")" << std::endl;
+					}
 				}
 				ffmpeg_process.wait();
 				error_reader.join();

@@ -67,12 +67,19 @@ drogon::Task<drogon::HttpResponsePtr> minio::asyncHandleHttpRequest(HttpRequestP
                         const std::string workerExecutable = workerExecutableEnv
                             ? workerExecutableEnv
                             : "./build/playbacq_worker";
-                        if (!std::filesystem::exists(workerExecutable)) {
+                        std::string resolvedWorkerExecutable = workerExecutable;
+                        if (!std::filesystem::exists(resolvedWorkerExecutable)) {
+                            const auto workerPath = boost::process::search_path(workerExecutable);
+                            if (!workerPath.empty()) {
+                                resolvedWorkerExecutable = workerPath.string();
+                            }
+                        }
+                        if (!std::filesystem::exists(resolvedWorkerExecutable)) {
                             throw std::runtime_error("Local worker executable not found: " + workerExecutable);
                         }
-                        std::cout << "Starting local worker " << workerExecutable
+                        std::cout << "Starting local worker " << resolvedWorkerExecutable
                                   << " for video ID " << videoId << std::endl;
-                        boost::process::child c(workerExecutable, videoId);
+                        boost::process::child c(resolvedWorkerExecutable, videoId);
                         c.detach();
                     }
                     catch (const std::exception& e) {
