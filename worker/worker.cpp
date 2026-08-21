@@ -28,6 +28,22 @@ constexpr const char* VIDEO_ENCODER = "libx264";
 constexpr const char* VIDEO_PRESET = "veryfast";
 constexpr const char* VIDEO_BITRATE = "";
 #endif
+
+class ThreadJoinGuard {
+public:
+	explicit ThreadJoinGuard(std::thread& thread) noexcept : thread_(thread) {}
+	ThreadJoinGuard(const ThreadJoinGuard&) = delete;
+	ThreadJoinGuard& operator=(const ThreadJoinGuard&) = delete;
+
+	~ThreadJoinGuard() {
+		if (thread_.joinable()) {
+			thread_.join();
+		}
+	}
+
+private:
+	std::thread& thread_;
+};
 }
 
 bool upload2MinIO(const std::string& local_file_path, const std::string& bucket_name, const std::string& object_key) {
@@ -399,6 +415,7 @@ int main(int argc, char* argv[]) {
 						std::cerr << "[FFmpeg stderr] " << error_line << std::endl;
 					}
 				});
+				ThreadJoinGuard error_reader_join_guard(error_reader);
 				std::string line;
 				while (std::getline(output_stream, line)) {
 					const std::size_t pts_position = line.find("pts_time:");
