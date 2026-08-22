@@ -11,7 +11,9 @@
 #include <regex>
 #include <format>
 #include <ranges>
+#include <set>
 #include <string_view>
+#include <vector>
 #include "../models/Videos.h"
 #include "../models/Comments.h"
 #include "../models/Tags.h"
@@ -23,6 +25,133 @@
 #include "Status.h"
 
 using namespace api;
+
+namespace {
+	struct ExternalSyncSelection {
+		std::set<std::string> videoFields;
+		std::set<std::string> statisticFields;
+	};
+
+	struct ExternalSyncRequest {
+		std::vector<std::string> videoIds;
+		ExternalSyncSelection selection;
+	};
+
+	bool hasOnlyMembers(const Json::Value& object, const std::set<std::string>& allowed) {
+		if (!object.isObject()) {
+			return false;
+		}
+		for (const auto& member : object.getMemberNames()) {
+			if (!allowed.contains(member)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	bool isValidYoutubeVideoId(const std::string& id) {
+		static const std::regex youtubeIdPattern(R"(^[A-Za-z0-9_-]{11}$)");
+		return std::regex_match(id, youtubeIdPattern);
+	}
+
+	bool parseFieldSelection(
+		const Json::Value& target,
+		const std::set<std::string>& allowedFields,
+		std::set<std::string>& selectedFields,
+		std::string& error
+	) {
+		if (!target.isObject() || !hasOnlyMembers(target, {"fields"})
+			|| !target.isMember("fields") || !target["fields"].isArray()
+			|| target["fields"].empty()) {
+			error = "Each selected target must contain a non-empty 'fields' array";
+			return false;
+		}
+
+		for (const auto& field : target["fields"]) {
+			if (!field.isString() || !allowedFields.contains(field.asString())) {
+				error = "The request contains an unsupported sync field";
+				return false;
+			}
+			if (!selectedFields.insert(field.asString()).second) {
+				error = "Sync fields must not contain duplicates";
+				return false;
+			}
+		}
+		return true;
+	}
+
+	std::optional<ExternalSyncRequest> parseExternalSyncRequest(
+		const Json::Value& body,
+		std::string& error
+	) {
+		if (!body.isObject() || !hasOnlyMembers(body, {"ids", "targets"})) {
+			error = "Request body must contain only 'ids' and 'targets'";
+			return std::nullopt;
+		}
+		if (!body.isMember("ids") || !body["ids"].isArray()
+			|| body["ids"].empty() || body["ids"].size() > 50) {
+			error = "'ids' must be an array containing 1 to 50 video IDs";
+			return std::nullopt;
+		}
+
+		ExternalSyncRequest request;
+		std::set<std::string> uniqueVideoIds;
+		for (const auto& id : body["ids"]) {
+			if (!id.isString() || id.asString().empty() || id.asString().size() > 255) {
+				error = "Each value in 'ids' must be a non-empty string of at most 255 characters";
+				return std::nullopt;
+			}
+			if (!uniqueVideoIds.insert(id.asString()).second) {
+				error = "'ids' must not contain duplicates";
+				return std::nullopt;
+			}
+			request.videoIds.push_back(id.asString());
+		}
+
+		if (!body.isMember("targets") || !body["targets"].isObject()
+			|| body["targets"].empty()) {
+			error = "Request body must contain a non-empty 'targets' object";
+			return std::nullopt;
+		}
+
+		const Json::Value& targets = body["targets"];
+		if (!hasOnlyMembers(targets, {"video", "statistics"})) {
+			error = "Only 'video' and 'statistics' targets are supported";
+			return std::nullopt;
+		}
+
+		if (targets.isMember("video")
+			&& !parseFieldSelection(
+				targets["video"],
+				{"title", "description", "duration", "type"},
+				request.selection.videoFields,
+				error
+			)) {
+			return std::nullopt;
+		}
+		if (targets.isMember("statistics")
+			&& !parseFieldSelection(
+				targets["statistics"],
+				{"view_count", "like_count", "comment_count"},
+				request.selection.statisticFields,
+				error
+			)) {
+			return std::nullopt;
+		}
+		return request;
+	}
+
+	drogon::HttpResponsePtr syncError(
+		drogon::HttpStatusCode status,
+		const std::string& message
+	) {
+		Json::Value body;
+		body["error"] = message;
+		auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+		response->setStatusCode(status);
+		return response;
+	}
+}
 
 drogon::Task<drogon::HttpResponsePtr> videos::getVideos(HttpRequestPtr req) {
 	std::optional<std::string> userId = req->getOptionalParameter<std::string>("userId");
@@ -291,27 +420,29 @@ drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
 			resp->setBody("Failed to fetch video info from YouTube API");
 			co_return resp;
 		}
-		const Json::Value videoInfo = videoInfoRaw.value();
-		// 現時点ではYoutubeのみ対応
-		if (videoInfo.get("isLive", false).asBool() || videoInfo.get("isUpcoming", false).asBool()) {
-			newVideo.setType("youtube live");
-		} else {
-			newVideo.setType("youtube");
+		const YoutubeAPI::VideoInfo& videoInfo = videoInfoRaw.value();
+		if (!videoInfo.title || !videoInfo.description) {
+			auto resp = drogon::HttpResponse::newHttpResponse();
+			resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+			resp->setBody("YouTube did not return required video information");
+			co_return resp;
 		}
+		// 現時点ではYoutubeのみ対応
+		newVideo.setType(videoInfo.type.value_or("youtube"));
 		// titleが空ならデフォルト値を設定する。
 		if (!jsonPtr->isMember("title") || jsonPtr->get("title", "").asString().empty()) {
-			newVideo.setTitle(videoInfo.get("title", "NULL").asString());
+			newVideo.setTitle(*videoInfo.title);
 		} else {
 			newVideo.setTitle(jsonPtr->get("title", "NULL").asString());
 		}
 		// descriptionが空ならデフォルト値を設定する。
 		if (!jsonPtr->isMember("description") || jsonPtr->get("description", "").asString().empty()) {
-			newVideo.setDescription(videoInfo.get("description", "NULL").asString());
+			newVideo.setDescription(*videoInfo.description);
 		} else {
 			newVideo.setDescription(jsonPtr->get("description", "NULL").asString());
 		}
 		// 動画の長さをYoutubeから取得する。
-		newVideo.setDuration(videoInfo.get("duration", 0).asInt());
+		newVideo.setDuration(videoInfo.duration.value_or(0));
 
 		newVideo.setUserId(req->getAttributes()->get<std::string>("userId"));
 		newVideo.setStatus((uint8_t)Status::completed);
@@ -330,6 +461,226 @@ drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
 		resp->setStatusCode(drogon::HttpStatusCode::k500InternalServerError);
 		resp->setBody("Failed to create video: " + std::string(e.what()));
 		co_return resp;
+	}
+}
+
+drogon::Task<drogon::HttpResponsePtr> videos::syncExVideo(HttpRequestPtr req) {
+	auto json = req->getJsonObject();
+	if (!json) {
+		co_return syncError(drogon::k400BadRequest, "Invalid JSON format");
+	}
+
+	std::string validationError;
+	auto syncRequest = parseExternalSyncRequest(*json, validationError);
+	if (!syncRequest) {
+		co_return syncError(drogon::k400BadRequest, validationError);
+	}
+
+	auto dbClient = drogon::app().getDbClient();
+	drogon::orm::CoroMapper<drogon_model::playbacq::Videos> mapper(dbClient);
+	try {
+		const std::string userId = req->getAttributes()->get<std::string>("userId");
+		std::vector<drogon_model::playbacq::Videos> videosToSync;
+		std::vector<std::string> youtubeIdsByVideo;
+		std::vector<std::string> uniqueYoutubeIds;
+		std::set<std::string> seenYoutubeIds;
+		videosToSync.reserve(syncRequest->videoIds.size());
+		youtubeIdsByVideo.reserve(syncRequest->videoIds.size());
+		uniqueYoutubeIds.reserve(syncRequest->videoIds.size());
+
+		for (const auto& id : syncRequest->videoIds) {
+			auto video = co_await mapper.findByPrimaryKey(id);
+			if (!video.getUserId() || video.getValueOfUserId() != userId) {
+				co_return syncError(drogon::k403Forbidden, "You are not the owner of every requested video");
+			}
+			if (!video.getIsExternal() || video.getValueOfIsExternal() != 1
+				|| !video.getType()
+				|| (video.getValueOfType() != "youtube" && video.getValueOfType() != "youtube live")) {
+				co_return syncError(drogon::k409Conflict, "Every requested video must be a supported external video");
+			}
+			if (!video.getVideoUrl() || video.getValueOfVideoUrl().empty()) {
+				co_return syncError(drogon::k409Conflict, "An external video ID is missing");
+			}
+
+			const std::string youtubeId = video.getValueOfVideoUrl();
+			if (!isValidYoutubeVideoId(youtubeId)) {
+				co_return syncError(drogon::k409Conflict, "An external YouTube video ID is invalid");
+			}
+			videosToSync.push_back(std::move(video));
+			youtubeIdsByVideo.push_back(youtubeId);
+			if (seenYoutubeIds.insert(youtubeId).second) {
+				uniqueYoutubeIds.push_back(youtubeId);
+			}
+		}
+
+		const char* apiKeyEnvironment = std::getenv("YOUTUBE_API_KEY");
+		if (apiKeyEnvironment == nullptr || apiKeyEnvironment[0] == '\0') {
+			co_return syncError(drogon::k500InternalServerError, "YouTube API key is not set");
+		}
+		const std::string apiKey(apiKeyEnvironment);
+
+		auto videoInfos = co_await YoutubeAPI::fetchVideoInfos(uniqueYoutubeIds, apiKey);
+		if (!videoInfos) {
+			co_return syncError(drogon::k502BadGateway, "Failed to fetch video data from YouTube");
+		}
+
+		for (size_t i = 0; i < videosToSync.size(); ++i) {
+			auto& video = videosToSync[i];
+			auto info = videoInfos->find(youtubeIdsByVideo[i]);
+			if (info == videoInfos->end()) {
+				continue;
+			}
+			const auto& videoInfo = info->second;
+			if (syncRequest->selection.videoFields.contains("title") && videoInfo.title) {
+				video.setTitle(*videoInfo.title);
+			}
+			if (syncRequest->selection.videoFields.contains("description") && videoInfo.description) {
+				video.setDescription(*videoInfo.description);
+			}
+			if (syncRequest->selection.videoFields.contains("duration") && videoInfo.duration) {
+				video.setDuration(*videoInfo.duration);
+			}
+			if (syncRequest->selection.videoFields.contains("type") && videoInfo.type) {
+				video.setType(*videoInfo.type);
+			}
+		}
+
+		{
+			auto transaction = co_await dbClient->newTransactionCoro();
+			drogon::orm::CoroMapper<drogon_model::playbacq::Videos> transactionMapper(transaction);
+			for (size_t i = 0; i < videosToSync.size(); ++i) {
+				const std::string& id = syncRequest->videoIds[i];
+				auto info = videoInfos->find(youtubeIdsByVideo[i]);
+				if (info == videoInfos->end()) {
+					continue;
+				}
+				const auto& videoInfo = info->second;
+				const bool hasVideoUpdate =
+					(syncRequest->selection.videoFields.contains("title") && videoInfo.title)
+					|| (syncRequest->selection.videoFields.contains("description") && videoInfo.description)
+					|| (syncRequest->selection.videoFields.contains("duration") && videoInfo.duration)
+					|| (syncRequest->selection.videoFields.contains("type") && videoInfo.type);
+				if (hasVideoUpdate) {
+					co_await transactionMapper.update(videosToSync[i]);
+				}
+
+				if (syncRequest->selection.statisticFields.contains("view_count") && videoInfo.viewCount) {
+					co_await transaction->execSqlCoro(
+						"INSERT INTO external_video_statistics "
+						"(video_id, provider, view_count) VALUES (?, 'youtube', ?) "
+						"ON DUPLICATE KEY UPDATE provider = VALUES(provider), "
+						"view_count = VALUES(view_count), synced_at = CURRENT_TIMESTAMP",
+						id,
+						*videoInfo.viewCount
+					);
+				}
+				if (syncRequest->selection.statisticFields.contains("like_count") && videoInfo.likeCount) {
+					co_await transaction->execSqlCoro(
+						"INSERT INTO external_video_statistics "
+						"(video_id, provider, like_count) VALUES (?, 'youtube', ?) "
+						"ON DUPLICATE KEY UPDATE provider = VALUES(provider), "
+						"like_count = VALUES(like_count), synced_at = CURRENT_TIMESTAMP",
+						id,
+						*videoInfo.likeCount
+					);
+				}
+				if (syncRequest->selection.statisticFields.contains("comment_count") && videoInfo.commentCount) {
+					co_await transaction->execSqlCoro(
+						"INSERT INTO external_video_statistics "
+						"(video_id, provider, comment_count) VALUES (?, 'youtube', ?) "
+						"ON DUPLICATE KEY UPDATE provider = VALUES(provider), "
+						"comment_count = VALUES(comment_count), synced_at = CURRENT_TIMESTAMP",
+						id,
+						*videoInfo.commentCount
+					);
+				}
+
+				co_await transaction->execSqlCoro(
+					"INSERT INTO external_video_metadata (video_id, provider, metadata) "
+					"VALUES (?, 'youtube', ?) "
+					"ON DUPLICATE KEY UPDATE provider = VALUES(provider), "
+					"metadata = VALUES(metadata), synced_at = CURRENT_TIMESTAMP",
+					id,
+					videoInfo.publicMetadata.toStyledString()
+				);
+			}
+		}
+
+		Json::Value responseBody;
+		responseBody["quota_units"] = 1;
+		responseBody["results"] = Json::Value(Json::arrayValue);
+		for (size_t i = 0; i < videosToSync.size(); ++i) {
+			Json::Value result;
+			result["id"] = syncRequest->videoIds[i];
+			auto info = videoInfos->find(youtubeIdsByVideo[i]);
+			if (info == videoInfos->end()) {
+				result["status"] = "skipped";
+				result["reason"] = "youtube_video_not_returned";
+				responseBody["results"].append(std::move(result));
+				continue;
+			}
+
+			const auto& videoInfo = info->second;
+			result["video"] = videosToSync[i].toJson();
+			result["metadata"] = videoInfo.publicMetadata;
+			result["synced"] = Json::Value(Json::objectValue);
+			bool hasSkippedField = false;
+			if (!syncRequest->selection.videoFields.empty()) {
+				Json::Value fields(Json::arrayValue);
+				for (const auto& field : syncRequest->selection.videoFields) {
+					const bool available =
+						(field == "title" && videoInfo.title)
+						|| (field == "description" && videoInfo.description)
+						|| (field == "duration" && videoInfo.duration)
+						|| (field == "type" && videoInfo.type);
+					if (available) {
+						fields.append(field);
+					} else {
+						result["skipped"]["video"][field] = "not_returned";
+						hasSkippedField = true;
+					}
+				}
+				if (!fields.empty()) {
+					result["synced"]["video"]["fields"] = std::move(fields);
+				}
+			}
+			if (!syncRequest->selection.statisticFields.empty()) {
+				if (syncRequest->selection.statisticFields.contains("view_count") && videoInfo.viewCount) {
+					result["synced"]["statistics"]["view_count"] =
+						Json::UInt64(*videoInfo.viewCount);
+				} else if (syncRequest->selection.statisticFields.contains("view_count")) {
+					result["skipped"]["statistics"]["view_count"] = "not_returned";
+					hasSkippedField = true;
+				}
+				if (syncRequest->selection.statisticFields.contains("like_count") && videoInfo.likeCount) {
+					result["synced"]["statistics"]["like_count"] =
+						Json::UInt64(*videoInfo.likeCount);
+				} else if (syncRequest->selection.statisticFields.contains("like_count")) {
+					result["skipped"]["statistics"]["like_count"] = "not_returned";
+					hasSkippedField = true;
+				}
+				if (syncRequest->selection.statisticFields.contains("comment_count") && videoInfo.commentCount) {
+					result["synced"]["statistics"]["comment_count"] =
+						Json::UInt64(*videoInfo.commentCount);
+				} else if (syncRequest->selection.statisticFields.contains("comment_count")) {
+					result["skipped"]["statistics"]["comment_count"] = "not_returned";
+					hasSkippedField = true;
+				}
+			}
+			result["status"] = hasSkippedField ? "partial" : "updated";
+			responseBody["results"].append(std::move(result));
+		}
+
+		auto response = drogon::HttpResponse::newHttpJsonResponse(responseBody);
+		response->setStatusCode(drogon::k200OK);
+		co_return response;
+	}
+	catch (const drogon::orm::UnexpectedRows&) {
+		co_return syncError(drogon::k404NotFound, "Video not found");
+	}
+	catch (const std::exception& e) {
+		std::cerr << "External video sync failed: " << e.what() << std::endl;
+		co_return syncError(drogon::k500InternalServerError, "Failed to sync external video");
 	}
 }
 

@@ -153,6 +153,155 @@ paths:
         "500":
           description: "サーバー内部エラー"
 
+  /api/ex-videos/sync:
+    post:
+      summary: "外部動画のデータを同期する"
+      description: "JSONのidsで指定した1〜50件の外部動画について、YouTubeの公開動画メタデータを1回の videos.list（1 quota unit）で取得して保存し、指定された動画情報・統計を一括同期します。同じtargetsが全動画に適用されます。YouTubeの正常応答内で動画やフィールドが欠落した場合は、取得できたデータだけを更新し、結果をpartialまたはskippedとして返します。YouTubeリクエスト自体の失敗時は更新せず、DB更新は1トランザクションで処理します。コメントは取得しません。fileDetails、processingDetails、suggestions、および公開 part 内の投稿者限定プロパティは取得結果に含めません。"
+      operationId: syncExternalVideo
+      x-tested: true
+      tags:
+        - Video
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - ids
+                - targets
+              additionalProperties: false
+              properties:
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  uniqueItems: true
+                  description: "同期するplaybacQ内の動画ID。指定順でresultsを返します。"
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+                targets:
+                  type: object
+                  minProperties: 1
+                  additionalProperties: false
+                  properties:
+                    video:
+                      type: object
+                      required:
+                        - fields
+                      additionalProperties: false
+                      properties:
+                        fields:
+                          type: array
+                          minItems: 1
+                          uniqueItems: true
+                          items:
+                            type: string
+                            enum:
+                              - title
+                              - description
+                              - duration
+                              - type
+                    statistics:
+                      type: object
+                      required:
+                        - fields
+                      additionalProperties: false
+                      properties:
+                        fields:
+                          type: array
+                          minItems: 1
+                          uniqueItems: true
+                          items:
+                            type: string
+                            enum:
+                              - view_count
+                              - like_count
+                              - comment_count
+            example:
+              ids:
+                - "external-video-id-1"
+                - "external-video-id-2"
+              targets:
+                video:
+                  fields:
+                    - title
+                    - description
+                    - duration
+                    - type
+                statistics:
+                  fields:
+                    - view_count
+                    - like_count
+                    - comment_count
+      responses:
+        "200":
+          description: "同期処理が完了しました。動画・フィールド単位の部分成功を含みます。"
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - results
+                  - quota_units
+                properties:
+                  results:
+                    type: array
+                    minItems: 1
+                    description: "リクエストのidsと同じ順序の同期結果"
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - status
+                      properties:
+                        id:
+                          type: string
+                          description: "playbacQ内の動画ID"
+                        status:
+                          type: string
+                          enum:
+                            - updated
+                            - partial
+                            - skipped
+                          description: "updatedは指定データをすべて更新、partialは取得できたフィールドだけ更新、skippedは動画リソース自体が返らず更新なし"
+                        video:
+                          $ref: "#/components/schemas/Video"
+                        metadata:
+                          type: object
+                          description: "今回取得・保存したYouTubeの公開動画メタデータ。updatedまたはpartialの場合に返し、投稿者限定情報は除外済みです。"
+                        synced:
+                          type: object
+                          description: "今回実際に同期したフィールドと値。updatedまたはpartialの場合に返します。"
+                        skipped:
+                          type: object
+                          description: "取得結果に存在せず更新しなかったフィールドと理由。partialの場合に返します。"
+                        reason:
+                          type: string
+                          enum:
+                            - youtube_video_not_returned
+                          description: "動画全体を更新しなかった理由。skippedの場合に返します。"
+                  quota_units:
+                    type: integer
+                    const: 1
+                    description: "この一括同期全体が消費するYouTube Data API quota unit"
+        "400":
+          description: "リクエストの形式、対象、またはフィールド指定が不正です。comments は指定できません。"
+        "401":
+          description: "認証されていません。"
+        "403":
+          description: "指定動画のいずれかの投稿者ではありません。"
+        "404":
+          description: "指定動画のいずれかが見つかりませんでした。"
+        "409":
+          description: "指定動画のいずれかが内部動画、または未対応の外部動画です。"
+        "500":
+          description: "サーバー設定またはDB処理に失敗しました。"
+        "502":
+          description: "YouTube APIリクエスト全体が失敗、またはレスポンス形式が不正で、同期を開始できませんでした。"
+
   /api/videos/{id}:
     get:
       summary: "動画の取得"

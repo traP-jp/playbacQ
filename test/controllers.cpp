@@ -10,12 +10,18 @@
 #include <future>
 #include <thread>
 #include <chrono>
+#include <atomic>
 #include <iostream>
 #include <mutex>
 #include <condition_variable>
 #include <algorithm>
 #include <vector>
 #include "../controllers/websocket_comments.h"
+
+extern std::atomic<unsigned int> g_youtubeVideosListCalls;
+extern std::mutex g_youtubeRequestMutex;
+extern std::string g_lastYoutubeVideoParts;
+extern std::string g_lastYoutubeVideoIds;
 
 drogon::HttpResponsePtr sendSyncRequest(
 	drogon::HttpMethod method,
@@ -268,6 +274,450 @@ DROGON_TEST(EditVideoMassAssignmentTest)
 	CHECK(*afterJson == beforeJson);
 
 	CHECK(deleteVideo(videoId) == true);
+}
+
+DROGON_TEST(ExternalVideoSyncTest)
+{
+	auto dbClient = drogon::app().getDbClient();
+	const std::string videoId = "external-sync-test";
+	const std::string secondVideoId = "external-sync-test-2";
+	const std::string partialVideoId = "external-sync-partial";
+	const std::string failedVideoId = "external-sync-fail";
+	const std::string missingUpstreamVideoId = "external-sync-missing";
+	const std::string internalVideoId = "internal-sync-test";
+	dbClient->execSqlSync(
+		"DELETE FROM videos WHERE video_id IN (?, ?, ?, ?, ?, ?)",
+		videoId,
+		secondVideoId,
+		partialVideoId,
+		failedVideoId,
+		missingUpstreamVideoId,
+		internalVideoId
+	);
+	dbClient->execSqlSync(
+		"INSERT INTO videos "
+		"(video_id, user_id, title, description, video_url, view_count, duration, "
+		"like_count, status, is_external, type) "
+		"VALUES (?, 'testuser', '同期前タイトル', '同期前説明', 'MOCKVIDEO01', 7, 9, 8, 2, 1, 'youtube')",
+		videoId
+	);
+	dbClient->execSqlSync(
+		"INSERT INTO videos "
+		"(video_id, user_id, title, description, video_url, view_count, duration, "
+		"like_count, status, is_external, type) "
+		"VALUES (?, 'testuser', '同期前タイトル2', '同期前説明2', 'MOCKVIDEO02', 17, 19, 18, 2, 1, 'youtube')",
+		secondVideoId
+	);
+	dbClient->execSqlSync(
+		"INSERT INTO videos "
+		"(video_id, user_id, title, description, video_url, view_count, duration, "
+		"like_count, status, is_external, type) "
+		"VALUES (?, 'testuser', '部分更新前タイトル', '部分更新前説明', 'PARTVIDEO01', 27, 29, 28, 2, 1, 'youtube')",
+		partialVideoId
+	);
+	dbClient->execSqlSync(
+		"INSERT INTO videos "
+		"(video_id, user_id, title, description, video_url, status, is_external, type) "
+		"VALUES (?, 'testuser', '失敗前タイトル', '失敗前説明', 'FAILVIDEO01', 2, 1, 'youtube')",
+		failedVideoId
+	);
+	dbClient->execSqlSync(
+		"INSERT INTO videos "
+		"(video_id, user_id, title, description, video_url, status, is_external, type) "
+		"VALUES (?, 'testuser', '欠落前タイトル', '欠落前説明', 'MISSVIDEO01', 2, 1, 'youtube')",
+		missingUpstreamVideoId
+	);
+	dbClient->execSqlSync(
+		"INSERT INTO videos "
+		"(video_id, user_id, title, description, video_url, status, is_external, type) "
+		"VALUES (?, 'testuser', '内部動画', '内部動画説明', '/watch/internal', 2, 0, 'internal')",
+		internalVideoId
+	);
+
+	Json::Value syncBody;
+	syncBody["ids"] = Json::Value(Json::arrayValue);
+	syncBody["ids"].append(videoId);
+	syncBody["ids"].append(secondVideoId);
+	syncBody["targets"]["video"]["fields"] = Json::Value(Json::arrayValue);
+	syncBody["targets"]["video"]["fields"].append("title");
+	syncBody["targets"]["statistics"]["fields"] = Json::Value(Json::arrayValue);
+	syncBody["targets"]["statistics"]["fields"].append("like_count");
+	syncBody["targets"]["statistics"]["fields"].append("comment_count");
+	g_youtubeVideosListCalls.store(0, std::memory_order_relaxed);
+
+	auto syncResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/sync",
+		syncBody
+	);
+	REQUIRE(syncResponse != nullptr);
+	CHECK(syncResponse->getStatusCode() == drogon::k200OK);
+	auto syncJson = syncResponse->getJsonObject();
+	REQUIRE(syncJson != nullptr);
+	REQUIRE((*syncJson)["results"].isArray());
+	REQUIRE((*syncJson)["results"].size() == 2);
+	const Json::Value& firstResult = (*syncJson)["results"][0];
+	const Json::Value& secondResult = (*syncJson)["results"][1];
+	CHECK(firstResult["id"].asString() == videoId);
+	CHECK(firstResult["status"].asString() == "updated");
+	CHECK(firstResult["video"]["title"].asString() == "YouTube同期タイトル");
+	CHECK(firstResult["video"]["description"].asString() == "同期前説明");
+	CHECK(firstResult["video"]["duration"].asInt() == 9);
+	CHECK(secondResult["id"].asString() == secondVideoId);
+	CHECK(secondResult["status"].asString() == "updated");
+	CHECK(secondResult["video"]["title"].asString() == "YouTube同期タイトル2");
+	CHECK(secondResult["video"]["description"].asString() == "同期前説明2");
+	CHECK(secondResult["video"]["duration"].asInt() == 19);
+	CHECK((*syncJson)["quota_units"].asInt() == 1);
+	CHECK(firstResult["synced"]["statistics"]["like_count"].asUInt64() == 56);
+	CHECK(firstResult["synced"]["statistics"]["comment_count"].asUInt64() == 78);
+	CHECK(secondResult["synced"]["statistics"]["like_count"].asUInt64() == 66);
+	CHECK(secondResult["synced"]["statistics"]["comment_count"].asUInt64() == 88);
+	CHECK(!firstResult["synced"]["statistics"].isMember("view_count"));
+	CHECK(!firstResult["synced"].isMember("comments"));
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 1);
+	{
+		std::lock_guard<std::mutex> lock(g_youtubeRequestMutex);
+		CHECK(g_lastYoutubeVideoParts ==
+			"id,snippet,contentDetails,status,statistics,paidProductPlacementDetails,"
+			"player,topicDetails,recordingDetails,liveStreamingDetails,brandPartner,localizations");
+		CHECK(g_lastYoutubeVideoParts.find("fileDetails") == std::string::npos);
+		CHECK(g_lastYoutubeVideoParts.find("processingDetails") == std::string::npos);
+		CHECK(g_lastYoutubeVideoParts.find("suggestions") == std::string::npos);
+		CHECK(g_lastYoutubeVideoIds == "MOCKVIDEO01,MOCKVIDEO02");
+	}
+	const Json::Value& publicMetadata = firstResult["metadata"];
+	CHECK(publicMetadata["snippet"]["channelTitle"].asString() == "公開チャンネル");
+	CHECK(publicMetadata["contentDetails"]["definition"].asString() == "hd");
+	CHECK(publicMetadata["status"]["privacyStatus"].asString() == "public");
+	CHECK(publicMetadata["statistics"]["commentCount"].asString() == "78");
+	CHECK(publicMetadata["paidProductPlacementDetails"].isObject());
+	CHECK(publicMetadata["player"].isObject());
+	CHECK(publicMetadata["topicDetails"].isObject());
+	CHECK(publicMetadata["recordingDetails"].isObject());
+	CHECK(publicMetadata["liveStreamingDetails"].isObject());
+	CHECK(publicMetadata["brandPartner"].isObject());
+	CHECK(publicMetadata["localizations"].isObject());
+	CHECK(!publicMetadata.isMember("fileDetails"));
+	CHECK(!publicMetadata.isMember("processingDetails"));
+	CHECK(!publicMetadata.isMember("suggestions"));
+	CHECK(!publicMetadata["contentDetails"].isMember("hasCustomThumbnail"));
+	CHECK(!publicMetadata["status"].isMember("selfDeclaredMadeForKids"));
+	CHECK(!publicMetadata["statistics"].isMember("dislikeCount"));
+
+	auto videoRows = dbClient->execSqlSync(
+		"SELECT title, description, duration, view_count, like_count FROM videos WHERE video_id = ?",
+		videoId
+	);
+	REQUIRE(videoRows.size() == 1);
+	CHECK(videoRows[0]["title"].as<std::string>() == "YouTube同期タイトル");
+	CHECK(videoRows[0]["description"].as<std::string>() == "同期前説明");
+	CHECK(videoRows[0]["duration"].as<int>() == 9);
+	CHECK(videoRows[0]["view_count"].as<int>() == 7);
+	CHECK(videoRows[0]["like_count"].as<int>() == 8);
+
+	auto statisticRows = dbClient->execSqlSync(
+		"SELECT view_count, like_count, comment_count FROM external_video_statistics WHERE video_id = ?",
+		videoId
+	);
+	REQUIRE(statisticRows.size() == 1);
+	CHECK(statisticRows[0]["view_count"].isNull());
+	CHECK(statisticRows[0]["like_count"].as<uint64_t>() == 56);
+	CHECK(statisticRows[0]["comment_count"].as<uint64_t>() == 78);
+	auto secondStatisticRows = dbClient->execSqlSync(
+		"SELECT view_count, like_count, comment_count FROM external_video_statistics WHERE video_id = ?",
+		secondVideoId
+	);
+	REQUIRE(secondStatisticRows.size() == 1);
+	CHECK(secondStatisticRows[0]["view_count"].isNull());
+	CHECK(secondStatisticRows[0]["like_count"].as<uint64_t>() == 66);
+	CHECK(secondStatisticRows[0]["comment_count"].as<uint64_t>() == 88);
+
+	auto metadataRows = dbClient->execSqlSync(
+		"SELECT metadata FROM external_video_metadata WHERE video_id = ?",
+		videoId
+	);
+	REQUIRE(metadataRows.size() == 1);
+	Json::Value savedMetadata;
+	Json::Reader metadataReader;
+	REQUIRE(metadataReader.parse(metadataRows[0]["metadata"].as<std::string>(), savedMetadata));
+	CHECK(savedMetadata == publicMetadata);
+
+	Json::Value secondSyncBody;
+	secondSyncBody["ids"] = Json::Value(Json::arrayValue);
+	secondSyncBody["ids"].append(videoId);
+	secondSyncBody["targets"]["video"]["fields"] = Json::Value(Json::arrayValue);
+	secondSyncBody["targets"]["video"]["fields"].append("description");
+	secondSyncBody["targets"]["video"]["fields"].append("duration");
+	secondSyncBody["targets"]["video"]["fields"].append("type");
+	secondSyncBody["targets"]["statistics"]["fields"] = Json::Value(Json::arrayValue);
+	secondSyncBody["targets"]["statistics"]["fields"].append("view_count");
+	auto secondSyncResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/sync",
+		secondSyncBody
+	);
+	REQUIRE(secondSyncResponse != nullptr);
+	CHECK(secondSyncResponse->getStatusCode() == drogon::k200OK);
+	auto secondSyncJson = secondSyncResponse->getJsonObject();
+	REQUIRE(secondSyncJson != nullptr);
+	REQUIRE((*secondSyncJson)["results"].size() == 1);
+	const Json::Value& secondSyncResult = (*secondSyncJson)["results"][0];
+	CHECK(secondSyncResult["id"].asString() == videoId);
+	CHECK(secondSyncResult["status"].asString() == "updated");
+	CHECK(secondSyncResult["video"]["title"].asString() == "YouTube同期タイトル");
+	CHECK(secondSyncResult["video"]["description"].asString() == "YouTube同期説明");
+	CHECK(secondSyncResult["video"]["duration"].asInt() == 123);
+	CHECK(secondSyncResult["video"]["type"].asString() == "youtube");
+	CHECK((*secondSyncJson)["quota_units"].asInt() == 1);
+	CHECK(secondSyncResult["synced"]["statistics"]["view_count"].asUInt64() == 1234);
+	CHECK(!secondSyncResult["synced"]["statistics"].isMember("like_count"));
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 2);
+
+	statisticRows = dbClient->execSqlSync(
+		"SELECT view_count, like_count, comment_count FROM external_video_statistics WHERE video_id = ?",
+		videoId
+	);
+	REQUIRE(statisticRows.size() == 1);
+	CHECK(statisticRows[0]["view_count"].as<uint64_t>() == 1234);
+	CHECK(statisticRows[0]["like_count"].as<uint64_t>() == 56);
+	CHECK(statisticRows[0]["comment_count"].as<uint64_t>() == 78);
+
+	Json::Value partialSyncBody;
+	partialSyncBody["ids"] = Json::Value(Json::arrayValue);
+	partialSyncBody["ids"].append(partialVideoId);
+	partialSyncBody["targets"]["video"]["fields"] = Json::Value(Json::arrayValue);
+	partialSyncBody["targets"]["video"]["fields"].append("title");
+	partialSyncBody["targets"]["video"]["fields"].append("description");
+	partialSyncBody["targets"]["video"]["fields"].append("duration");
+	partialSyncBody["targets"]["video"]["fields"].append("type");
+	partialSyncBody["targets"]["statistics"]["fields"] = Json::Value(Json::arrayValue);
+	partialSyncBody["targets"]["statistics"]["fields"].append("view_count");
+	partialSyncBody["targets"]["statistics"]["fields"].append("like_count");
+	partialSyncBody["targets"]["statistics"]["fields"].append("comment_count");
+	auto partialSyncResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/sync",
+		partialSyncBody
+	);
+	REQUIRE(partialSyncResponse != nullptr);
+	CHECK(partialSyncResponse->getStatusCode() == drogon::k200OK);
+	auto partialSyncJson = partialSyncResponse->getJsonObject();
+	REQUIRE(partialSyncJson != nullptr);
+	REQUIRE((*partialSyncJson)["results"].size() == 1);
+	const Json::Value& partialResult = (*partialSyncJson)["results"][0];
+	CHECK(partialResult["id"].asString() == partialVideoId);
+	CHECK(partialResult["status"].asString() == "partial");
+	CHECK(partialResult["video"]["title"].asString() == "YouTube同期タイトル");
+	CHECK(partialResult["video"]["description"].asString() == "部分更新前説明");
+	CHECK(partialResult["video"]["duration"].asInt() == 123);
+	CHECK(partialResult["synced"]["video"]["fields"].size() == 3);
+	CHECK(partialResult["skipped"]["video"]["description"].asString() == "not_returned");
+	CHECK(partialResult["synced"]["statistics"]["view_count"].asUInt64() == 1234);
+	CHECK(partialResult["synced"]["statistics"]["comment_count"].asUInt64() == 78);
+	CHECK(partialResult["skipped"]["statistics"]["like_count"].asString() == "not_returned");
+	CHECK((*partialSyncJson)["quota_units"].asInt() == 1);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 3);
+
+	auto partialRows = dbClient->execSqlSync(
+		"SELECT title, description, duration FROM videos WHERE video_id = ?",
+		partialVideoId
+	);
+	REQUIRE(partialRows.size() == 1);
+	CHECK(partialRows[0]["title"].as<std::string>() == "YouTube同期タイトル");
+	CHECK(partialRows[0]["description"].as<std::string>() == "部分更新前説明");
+	CHECK(partialRows[0]["duration"].as<int>() == 123);
+	auto partialStatisticRows = dbClient->execSqlSync(
+		"SELECT view_count, like_count, comment_count FROM external_video_statistics WHERE video_id = ?",
+		partialVideoId
+	);
+	REQUIRE(partialStatisticRows.size() == 1);
+	CHECK(partialStatisticRows[0]["view_count"].as<uint64_t>() == 1234);
+	CHECK(partialStatisticRows[0]["like_count"].isNull());
+	CHECK(partialStatisticRows[0]["comment_count"].as<uint64_t>() == 78);
+
+	auto forbiddenResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/sync",
+		syncBody,
+		{},
+		"otheruser"
+	);
+	REQUIRE(forbiddenResponse != nullptr);
+	CHECK(forbiddenResponse->getStatusCode() == drogon::k403Forbidden);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 3);
+
+	Json::Value invalidBody;
+	invalidBody["ids"] = Json::Value(Json::arrayValue);
+	invalidBody["ids"].append(videoId);
+	invalidBody["targets"]["video"]["fields"] = Json::Value(Json::arrayValue);
+	invalidBody["targets"]["video"]["fields"].append("video_url");
+	auto invalidResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/sync",
+		invalidBody
+	);
+	REQUIRE(invalidResponse != nullptr);
+	CHECK(invalidResponse->getStatusCode() == drogon::k400BadRequest);
+
+	const std::vector<Json::Value> malformedBodies = {
+		Json::Value(Json::objectValue),
+		[&] {
+			Json::Value body;
+			body["ids"] = Json::Value(Json::arrayValue);
+			body["ids"].append(videoId);
+			body["targets"] = Json::Value(Json::objectValue);
+			return body;
+		}(),
+		[&] {
+			Json::Value body;
+			body["ids"] = Json::Value(Json::arrayValue);
+			body["ids"].append(videoId);
+			body["targets"]["comments"]["enabled"] = true;
+			return body;
+		}(),
+		[&] {
+			Json::Value body;
+			body["ids"] = Json::Value(Json::arrayValue);
+			body["ids"].append(videoId);
+			body["targets"]["video"]["fields"] = Json::Value(Json::arrayValue);
+			body["targets"]["video"]["fields"].append("title");
+			body["targets"]["video"]["fields"].append("title");
+			return body;
+		}(),
+		[&] {
+			Json::Value body = secondSyncBody;
+			body["ids"].append(videoId);
+			return body;
+		}(),
+		[&] {
+			Json::Value body = secondSyncBody;
+			body["unexpected"] = true;
+			return body;
+		}(),
+		[&] {
+			Json::Value body = secondSyncBody;
+			body["ids"] = Json::Value(Json::arrayValue);
+			for (int i = 0; i < 51; ++i) {
+				body["ids"].append("video-" + std::to_string(i));
+			}
+			return body;
+		}(),
+	};
+	for (const auto& malformedBody : malformedBodies) {
+		auto malformedResponse = sendSyncRequest(
+			drogon::Post,
+			"/api/ex-videos/sync",
+			malformedBody
+		);
+		REQUIRE(malformedResponse != nullptr);
+		CHECK(malformedResponse->getStatusCode() == drogon::k400BadRequest);
+	}
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 3);
+
+	Json::Value internalBody = syncBody;
+	internalBody["ids"] = Json::Value(Json::arrayValue);
+	internalBody["ids"].append(videoId);
+	internalBody["ids"].append(internalVideoId);
+	auto internalResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/sync",
+		internalBody
+	);
+	REQUIRE(internalResponse != nullptr);
+	CHECK(internalResponse->getStatusCode() == drogon::k409Conflict);
+	Json::Value missingBody = syncBody;
+	missingBody["ids"] = Json::Value(Json::arrayValue);
+	missingBody["ids"].append(videoId);
+	missingBody["ids"].append("missing-video");
+	auto missingResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/sync",
+		missingBody
+	);
+	REQUIRE(missingResponse != nullptr);
+	CHECK(missingResponse->getStatusCode() == drogon::k404NotFound);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 3);
+
+	Json::Value failureBody;
+	failureBody["ids"] = Json::Value(Json::arrayValue);
+	failureBody["ids"].append(videoId);
+	failureBody["ids"].append(failedVideoId);
+	failureBody["targets"]["video"]["fields"] = Json::Value(Json::arrayValue);
+	failureBody["targets"]["video"]["fields"].append("title");
+	dbClient->execSqlSync(
+		"UPDATE videos SET title = '原子性確認タイトル' WHERE video_id = ?",
+		videoId
+	);
+	auto failureResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/sync",
+		failureBody
+	);
+	REQUIRE(failureResponse != nullptr);
+	CHECK(failureResponse->getStatusCode() == drogon::k502BadGateway);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 4);
+	auto failedRows = dbClient->execSqlSync(
+		"SELECT title FROM videos WHERE video_id = ?",
+		failedVideoId
+	);
+	REQUIRE(failedRows.size() == 1);
+	CHECK(failedRows[0]["title"].as<std::string>() == "失敗前タイトル");
+	auto atomicRows = dbClient->execSqlSync(
+		"SELECT title FROM videos WHERE video_id = ?",
+		videoId
+	);
+	REQUIRE(atomicRows.size() == 1);
+	CHECK(atomicRows[0]["title"].as<std::string>() == "原子性確認タイトル");
+
+	Json::Value missingUpstreamBody = failureBody;
+	missingUpstreamBody["ids"] = Json::Value(Json::arrayValue);
+	missingUpstreamBody["ids"].append(videoId);
+	missingUpstreamBody["ids"].append(missingUpstreamVideoId);
+	auto missingUpstreamResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/sync",
+		missingUpstreamBody
+	);
+	REQUIRE(missingUpstreamResponse != nullptr);
+	CHECK(missingUpstreamResponse->getStatusCode() == drogon::k200OK);
+	auto missingUpstreamJson = missingUpstreamResponse->getJsonObject();
+	REQUIRE(missingUpstreamJson != nullptr);
+	REQUIRE((*missingUpstreamJson)["results"].size() == 2);
+	CHECK((*missingUpstreamJson)["quota_units"].asInt() == 1);
+	CHECK((*missingUpstreamJson)["results"][0]["id"].asString() == videoId);
+	CHECK((*missingUpstreamJson)["results"][0]["status"].asString() == "updated");
+	CHECK((*missingUpstreamJson)["results"][1]["id"].asString() == missingUpstreamVideoId);
+	CHECK((*missingUpstreamJson)["results"][1]["status"].asString() == "skipped");
+	CHECK((*missingUpstreamJson)["results"][1]["reason"].asString() == "youtube_video_not_returned");
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 5);
+	atomicRows = dbClient->execSqlSync(
+		"SELECT title FROM videos WHERE video_id = ?",
+		videoId
+	);
+	REQUIRE(atomicRows.size() == 1);
+	CHECK(atomicRows[0]["title"].as<std::string>() == "YouTube同期タイトル");
+	auto missingUpstreamRows = dbClient->execSqlSync(
+		"SELECT title FROM videos WHERE video_id = ?",
+		missingUpstreamVideoId
+	);
+	REQUIRE(missingUpstreamRows.size() == 1);
+	CHECK(missingUpstreamRows[0]["title"].as<std::string>() == "欠落前タイトル");
+	auto missingMetadataRows = dbClient->execSqlSync(
+		"SELECT video_id FROM external_video_metadata WHERE video_id = ?",
+		missingUpstreamVideoId
+	);
+	CHECK(missingMetadataRows.empty());
+
+	dbClient->execSqlSync(
+		"DELETE FROM videos WHERE video_id IN (?, ?, ?, ?, ?, ?)",
+		videoId,
+		secondVideoId,
+		partialVideoId,
+		failedVideoId,
+		missingUpstreamVideoId,
+		internalVideoId
+	);
 }
 
 DROGON_TEST(SearchTest)

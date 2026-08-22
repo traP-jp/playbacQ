@@ -20,7 +20,8 @@ services:
       - MYSQL_PASSWORD=test_pass
       - S3_ENDPOINT=http://test-minio:9000
       - MODAL_HOST=http://127.0.0.1:9999
-      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-test-key}
+      - YOUTUBE_API_BASE_URL=http://127.0.0.1:9999
     depends_on:
       test-db:
         condition: service_healthy

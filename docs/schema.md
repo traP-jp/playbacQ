@@ -18,6 +18,21 @@ erDiagram
 	TINYINT is_external
 	varchar type
   }
+  external_video_statistics {
+	varchar video_id PK,FK
+	varchar provider
+	BIGINT view_count
+	BIGINT like_count
+	BIGINT comment_count
+	datetime synced_at
+  }
+	
+  external_video_metadata {
+	varchar video_id PK,FK
+	varchar provider
+	json metadata
+	datetime synced_at
+  }
   comments {
 	int comment_id PK
 	varchar video_id FK
@@ -50,5 +65,7 @@ erDiagram
   videos||--o{video_tags : has
   tags||--o{video_tags : tagged_with
   videos||--o{video_likes : has
+  videos||--o|external_video_statistics : has
+  videos||--o|external_video_metadata : has
 ```
 
