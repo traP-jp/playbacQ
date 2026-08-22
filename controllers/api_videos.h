@@ -19,6 +19,7 @@ namespace api
     ADD_METHOD_TO(videos::postVideos, "/api/videos", Post, "AuthFilter");
     ADD_METHOD_TO(videos::deleteVideo, "/api/videos", Delete, "AuthFilter");
     ADD_METHOD_TO(videos::postExVideo, "/api/ex-videos", Post, "AuthFilter");
+    ADD_METHOD_TO(videos::syncExVideo, "/api/ex-videos/sync", Post, "AuthFilter");
 
     ADD_METHOD_TO(videos::getVideo, "/api/videos/{1}", Get);
     ADD_METHOD_TO(videos::patchVideo, "/api/videos/{1}", Patch, "AuthFilter");
@@ -47,6 +48,7 @@ namespace api
     drogon::Task<drogon::HttpResponsePtr> postVideos(HttpRequestPtr req);
     drogon::Task<drogon::HttpResponsePtr> deleteVideo(HttpRequestPtr req);
     drogon::Task<drogon::HttpResponsePtr> postExVideo(HttpRequestPtr req);
+    drogon::Task<drogon::HttpResponsePtr> syncExVideo(HttpRequestPtr req);
 
     drogon::Task<drogon::HttpResponsePtr> getVideo(HttpRequestPtr req, std::string id);
     drogon::Task<drogon::HttpResponsePtr> patchVideo(HttpRequestPtr req, std::string id);
