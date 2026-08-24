@@ -153,6 +153,155 @@ paths:
         "500":
           description: "サーバー内部エラー"
 
+  /api/ex-videos/{id}/duration/refresh:
+    post:
+      summary: "外部ライブ動画の再生時間を更新する"
+      description: "動画アクセス時にフロントエンドから呼び出す再生時間更新用APIです。配信前・配信中は現在の再生時間を保持し、アーカイブ後にdurationとtypeを更新します。更新には一定のクールタイムがあります。"
+      operationId: refreshExternalVideoDuration
+      x-tested: true
+      tags:
+        - Video
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "playbacQ内の動画ID"
+      responses:
+        "200":
+          description: "更新、クールダウンによる省略、または更新不要の判定が完了しました。"
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - quota_units
+                  - video
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - updated
+                      - unchanged
+                      - cooldown
+                  quota_units:
+                    type: integer
+                    minimum: 0
+                    maximum: 1
+                    description: "今回消費したYouTube Data API quota unit"
+                  video:
+                    $ref: "#/components/schemas/Video"
+                  reason:
+                    type: string
+                    enum:
+                      - not_live_video
+                      - broadcast_not_archived
+                      - duration_not_available
+        "401":
+          description: "認証されていません。"
+        "404":
+          description: "動画が見つかりませんでした。"
+        "409":
+          description: "対象がサポート対象の外部YouTube動画ではありません。"
+        "500":
+          description: "YouTube APIキー、Redis、またはDBの処理に失敗しました。"
+        "502":
+          description: "YouTube APIリクエストまたはレスポンスの検証に失敗しました。"
+
+  /api/ex-videos/{id}/metadata/refresh:
+    post:
+      summary: "外部動画のタイトル・説明を更新する"
+      description: "投稿者が明示的に選択した表示情報だけをYouTubeから再取得して上書きします。YouTubeレスポンスで欠落したフィールドは個別に更新を省略します。"
+      operationId: refreshExternalVideoMetadata
+      x-tested: true
+      tags:
+        - Video
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "playbacQ内の動画ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - fields
+              additionalProperties: false
+              properties:
+                fields:
+                  type: array
+                  minItems: 1
+                  maxItems: 2
+                  uniqueItems: true
+                  items:
+                    type: string
+                    enum:
+                      - title
+                      - description
+            example:
+              fields:
+                - title
+                - description
+      responses:
+        "200":
+          description: "指定フィールドの更新処理が完了しました。"
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                  - quota_units
+                  - video
+                  - synced_fields
+                  - skipped_fields
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - updated
+                      - partial
+                      - skipped
+                  quota_units:
+                    type: integer
+                    const: 1
+                  video:
+                    $ref: "#/components/schemas/Video"
+                  synced_fields:
+                    type: array
+                    items:
+                      type: string
+                      enum:
+                        - title
+                        - description
+                  skipped_fields:
+                    type: array
+                    items:
+                      type: string
+                      enum:
+                        - title
+                        - description
+        "400":
+          description: "fieldsが省略、空、重複、不明な値、またはリクエストに余分なプロパティがあります。"
+        "401":
+          description: "認証されていません。"
+        "403":
+          description: "対象動画の投稿者ではありません。"
+        "404":
+          description: "動画が見つかりませんでした。"
+        "409":
+          description: "対象がサポート対象の外部YouTube動画ではありません。"
+        "500":
+          description: "YouTube APIキーまたはDBの処理に失敗しました。"
+        "502":
+          description: "YouTube APIリクエストまたはレスポンスの検証に失敗しました。"
   /api/videos/{id}:
     get:
       summary: "動画の取得"

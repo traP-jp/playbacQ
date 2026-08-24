@@ -11,7 +11,9 @@
 #include <regex>
 #include <format>
 #include <ranges>
+#include <set>
 #include <string_view>
+#include <vector>
 #include "../models/Videos.h"
 #include "../models/Comments.h"
 #include "../models/Tags.h"
@@ -23,6 +25,82 @@
 #include "Status.h"
 
 using namespace api;
+
+namespace {
+	constexpr int kExternalDurationRefreshCooldownSeconds = 30 * 60;
+	constexpr std::string_view kExternalDurationRefreshKeyPrefix =
+		"external-video:duration-refresh:";
+
+	bool hasOnlyMembers(const Json::Value& object, const std::set<std::string>& allowed) {
+		if (!object.isObject()) {
+			return false;
+		}
+		for (const auto& member : object.getMemberNames()) {
+			if (!allowed.contains(member)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	bool isValidYoutubeVideoId(const std::string& id) {
+		static const std::regex youtubeIdPattern(R"(^[A-Za-z0-9_-]{11}$)");
+		return std::regex_match(id, youtubeIdPattern);
+	}
+
+	std::optional<std::set<std::string>> parseMetadataRefreshFields(
+		const Json::Value& body,
+		std::string& error
+	) {
+		if (!body.isObject() || !hasOnlyMembers(body, {"fields"})
+			|| !body.isMember("fields") || !body["fields"].isArray()
+			|| body["fields"].empty()) {
+			error = "Request body must contain only a non-empty 'fields' array";
+			return std::nullopt;
+		}
+
+		std::set<std::string> fields;
+		for (const auto& field : body["fields"]) {
+			if (!field.isString()
+				|| (field.asString() != "title" && field.asString() != "description")) {
+				error = "Only 'title' and 'description' can be refreshed";
+				return std::nullopt;
+			}
+			if (!fields.insert(field.asString()).second) {
+				error = "Refresh fields must not contain duplicates";
+				return std::nullopt;
+			}
+		}
+		return fields;
+	}
+
+	drogon::HttpResponsePtr externalRefreshError(
+		drogon::HttpStatusCode status,
+		const std::string& message
+	) {
+		Json::Value body;
+		body["error"] = message;
+		auto response = drogon::HttpResponse::newHttpJsonResponse(body);
+		response->setStatusCode(status);
+		return response;
+	}
+
+	std::optional<std::string> youtubeApiKey() {
+		const char* value = std::getenv("YOUTUBE_API_KEY");
+		if (value == nullptr || value[0] == '\0') {
+			return std::nullopt;
+		}
+		return std::string(value);
+	}
+
+	bool isSupportedYoutubeVideo(const drogon_model::playbacq::Videos& video) {
+		return video.getIsExternal() && video.getValueOfIsExternal() == 1
+			&& video.getType()
+			&& (video.getValueOfType() == "youtube"
+				|| video.getValueOfType() == "youtube live")
+			&& video.getVideoUrl() && isValidYoutubeVideoId(video.getValueOfVideoUrl());
+	}
+}
 
 drogon::Task<drogon::HttpResponsePtr> videos::getVideos(HttpRequestPtr req) {
 	std::optional<std::string> userId = req->getOptionalParameter<std::string>("userId");
@@ -291,27 +369,29 @@ drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
 			resp->setBody("Failed to fetch video info from YouTube API");
 			co_return resp;
 		}
-		const Json::Value videoInfo = videoInfoRaw.value();
-		// 現時点ではYoutubeのみ対応
-		if (videoInfo.get("isLive", false).asBool() || videoInfo.get("isUpcoming", false).asBool()) {
-			newVideo.setType("youtube live");
-		} else {
-			newVideo.setType("youtube");
+		const YoutubeAPI::VideoInfo& videoInfo = videoInfoRaw.value();
+		if (!videoInfo.title || !videoInfo.description) {
+			auto resp = drogon::HttpResponse::newHttpResponse();
+			resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+			resp->setBody("YouTube did not return required video information");
+			co_return resp;
 		}
+		// 現時点ではYoutubeのみ対応
+		newVideo.setType(videoInfo.type.value_or("youtube"));
 		// titleが空ならデフォルト値を設定する。
 		if (!jsonPtr->isMember("title") || jsonPtr->get("title", "").asString().empty()) {
-			newVideo.setTitle(videoInfo.get("title", "NULL").asString());
+			newVideo.setTitle(*videoInfo.title);
 		} else {
 			newVideo.setTitle(jsonPtr->get("title", "NULL").asString());
 		}
 		// descriptionが空ならデフォルト値を設定する。
 		if (!jsonPtr->isMember("description") || jsonPtr->get("description", "").asString().empty()) {
-			newVideo.setDescription(videoInfo.get("description", "NULL").asString());
+			newVideo.setDescription(*videoInfo.description);
 		} else {
 			newVideo.setDescription(jsonPtr->get("description", "NULL").asString());
 		}
 		// 動画の長さをYoutubeから取得する。
-		newVideo.setDuration(videoInfo.get("duration", 0).asInt());
+		newVideo.setDuration(videoInfo.duration.value_or(0));
 
 		newVideo.setUserId(req->getAttributes()->get<std::string>("userId"));
 		newVideo.setStatus((uint8_t)Status::completed);
@@ -330,6 +410,218 @@ drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
 		resp->setStatusCode(drogon::HttpStatusCode::k500InternalServerError);
 		resp->setBody("Failed to create video: " + std::string(e.what()));
 		co_return resp;
+	}
+}
+
+drogon::Task<drogon::HttpResponsePtr> videos::refreshExVideoDuration(
+	[[maybe_unused]] HttpRequestPtr req,
+	std::string id
+) {
+	auto dbClient = drogon::app().getDbClient();
+	drogon::orm::CoroMapper<drogon_model::playbacq::Videos> mapper(dbClient);
+	try {
+		auto video = co_await mapper.findByPrimaryKey(id);
+		if (!isSupportedYoutubeVideo(video)) {
+			co_return externalRefreshError(
+				drogon::k409Conflict,
+				"Video must be a supported external YouTube video"
+			);
+		}
+
+		auto durationResponse = [](const std::string& status,
+		const drogon_model::playbacq::Videos& currentVideo,
+		int quotaUnits,
+		const std::optional<std::string>& reason = std::nullopt) {
+			Json::Value body;
+			body["status"] = status;
+			body["quota_units"] = quotaUnits;
+			body["video"] = currentVideo.toJson();
+			if (reason) {
+				body["reason"] = *reason;
+			}
+			return drogon::HttpResponse::newHttpJsonResponse(body);
+		};
+
+		if (video.getValueOfType() != "youtube live") {
+			co_return durationResponse("unchanged", video, 0, "not_live_video");
+		}
+
+		auto apiKey = youtubeApiKey();
+		if (!apiKey) {
+			co_return externalRefreshError(
+				drogon::k500InternalServerError,
+				"YouTube API key is not set"
+			);
+		}
+
+		auto redis = drogon::app().getRedisClient();
+		if (!redis) {
+			co_return externalRefreshError(
+				drogon::k500InternalServerError,
+				"Failed to get Redis client"
+			);
+		}
+
+		const std::string cooldownKey =
+			std::string(kExternalDurationRefreshKeyPrefix) + id;
+		auto cooldownResult = co_await redis->execCommandCoro(
+			"SET %s 1 EX %d NX",
+			cooldownKey.c_str(),
+			kExternalDurationRefreshCooldownSeconds
+		);
+		if (cooldownResult.isNil()) {
+			co_return durationResponse("cooldown", video, 0);
+		}
+
+		auto videoInfo = co_await YoutubeAPI::fetchVideoInfo(
+			video.getValueOfVideoUrl(),
+			*apiKey
+		);
+		if (!videoInfo) {
+			co_return externalRefreshError(
+				drogon::k502BadGateway,
+				"Failed to fetch video data from YouTube"
+			);
+		}
+		if (!videoInfo->type) {
+			co_return externalRefreshError(
+				drogon::k502BadGateway,
+				"YouTube did not return the broadcast state"
+			);
+		}
+
+		if (*videoInfo->type == "youtube live") {
+			co_return durationResponse(
+				"unchanged",
+				video,
+				1,
+				"broadcast_not_archived"
+			);
+		}
+		if (!videoInfo->duration || *videoInfo->duration <= 0) {
+			co_return durationResponse(
+				"unchanged",
+				video,
+				1,
+				"duration_not_available"
+			);
+		}
+
+		video.setDuration(*videoInfo->duration);
+		video.setType("youtube");
+		co_await mapper.update(video);
+		co_return durationResponse("updated", video, 1);
+	}
+	catch (const drogon::orm::UnexpectedRows&) {
+		co_return externalRefreshError(drogon::k404NotFound, "Video not found");
+	}
+	catch (const std::exception& e) {
+		std::cerr << "External video duration refresh failed: " << e.what() << std::endl;
+		co_return externalRefreshError(
+			drogon::k500InternalServerError,
+			"Failed to refresh external video duration"
+		);
+	}
+}
+
+drogon::Task<drogon::HttpResponsePtr> videos::refreshExVideoMetadata(
+	HttpRequestPtr req,
+	std::string id
+) {
+	auto json = req->getJsonObject();
+	if (!json) {
+		co_return externalRefreshError(drogon::k400BadRequest, "Invalid JSON format");
+	}
+
+	std::string validationError;
+	auto fields = parseMetadataRefreshFields(*json, validationError);
+	if (!fields) {
+		co_return externalRefreshError(drogon::k400BadRequest, validationError);
+	}
+
+	auto dbClient = drogon::app().getDbClient();
+	drogon::orm::CoroMapper<drogon_model::playbacq::Videos> mapper(dbClient);
+	try {
+		auto video = co_await mapper.findByPrimaryKey(id);
+		const std::string userId = req->getAttributes()->get<std::string>("userId");
+		if (!video.getUserId() || video.getValueOfUserId() != userId) {
+			co_return externalRefreshError(
+				drogon::k403Forbidden,
+				"You are not the owner of this video"
+			);
+		}
+		if (!isSupportedYoutubeVideo(video)) {
+			co_return externalRefreshError(
+				drogon::k409Conflict,
+				"Video must be a supported external YouTube video"
+			);
+		}
+
+		auto apiKey = youtubeApiKey();
+		if (!apiKey) {
+			co_return externalRefreshError(
+				drogon::k500InternalServerError,
+				"YouTube API key is not set"
+			);
+		}
+
+		auto videoInfo = co_await YoutubeAPI::fetchVideoInfo(
+			video.getValueOfVideoUrl(),
+			*apiKey
+		);
+		if (!videoInfo) {
+			co_return externalRefreshError(
+				drogon::k502BadGateway,
+				"Failed to fetch video data from YouTube"
+			);
+		}
+
+		const bool updateTitle =
+			fields->contains("title") && videoInfo->title.has_value();
+		const bool updateDescription =
+			fields->contains("description") && videoInfo->description.has_value();
+		if (updateTitle) {
+			video.setTitle(*videoInfo->title);
+		}
+		if (updateDescription) {
+			video.setDescription(*videoInfo->description);
+		}
+		if (updateTitle || updateDescription) {
+			co_await mapper.update(video);
+		}
+
+		Json::Value syncedFields(Json::arrayValue);
+		Json::Value skippedFields(Json::arrayValue);
+		for (const auto& field : *fields) {
+			const bool available = field == "title"
+				? videoInfo->title.has_value()
+				: videoInfo->description.has_value();
+			(available ? syncedFields : skippedFields).append(field);
+		}
+
+		Json::Value body;
+		if (syncedFields.empty()) {
+			body["status"] = "skipped";
+		} else if (!skippedFields.empty()) {
+			body["status"] = "partial";
+		} else {
+			body["status"] = "updated";
+		}
+		body["quota_units"] = 1;
+		body["video"] = video.toJson();
+		body["synced_fields"] = std::move(syncedFields);
+		body["skipped_fields"] = std::move(skippedFields);
+		co_return drogon::HttpResponse::newHttpJsonResponse(body);
+	}
+	catch (const drogon::orm::UnexpectedRows&) {
+		co_return externalRefreshError(drogon::k404NotFound, "Video not found");
+	}
+	catch (const std::exception& e) {
+		std::cerr << "External video metadata refresh failed: " << e.what() << std::endl;
+		co_return externalRefreshError(
+			drogon::k500InternalServerError,
+			"Failed to refresh external video metadata"
+		);
 	}
 }
 

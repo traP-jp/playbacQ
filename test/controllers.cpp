@@ -10,12 +10,18 @@
 #include <future>
 #include <thread>
 #include <chrono>
+#include <atomic>
 #include <iostream>
 #include <mutex>
 #include <condition_variable>
 #include <algorithm>
 #include <vector>
 #include "../controllers/websocket_comments.h"
+
+extern std::atomic<unsigned int> g_youtubeVideosListCalls;
+extern std::mutex g_youtubeRequestMutex;
+extern std::string g_lastYoutubeVideoParts;
+extern std::string g_lastYoutubeVideoIds;
 
 drogon::HttpResponsePtr sendSyncRequest(
 	drogon::HttpMethod method,
@@ -140,6 +146,24 @@ std::optional<std::string> getRedisValueSync(const std::string& key) {
 		"GET %s", key.c_str()
 	);
 	return fut.get();
+}
+
+void deleteRedisKeySync(const std::string& key) {
+	auto redisClient = drogon::app().getRedisClient();
+	std::promise<void> prom;
+	auto fut = prom.get_future();
+
+	redisClient->execCommandAsync(
+		[&prom](const drogon::nosql::RedisResult&) {
+			prom.set_value();
+		},
+		[&prom](const std::exception& e) {
+			std::cerr << "Redis Error: " << e.what() << std::endl;
+			prom.set_value();
+		},
+		"DEL %s", key.c_str()
+	);
+	fut.get();
 }
 
 bool deleteVideo(const std::string& videoId, const std::string& authUser = "testuser") {
@@ -270,6 +294,400 @@ DROGON_TEST(EditVideoMassAssignmentTest)
 	CHECK(deleteVideo(videoId) == true);
 }
 
+DROGON_TEST(ExternalVideoRefreshTest)
+{
+	auto dbClient = drogon::app().getDbClient();
+	const std::string archivedId = "refresh-test-archived";
+	const std::string activeId = "refresh-test-active";
+	const std::string premiereId = "refresh-test-premiere";
+	const std::string dayLongId = "refresh-test-day-long";
+	const std::string normalId = "refresh-test-normal";
+	const std::string metadataId = "refresh-test-metadata";
+	const std::string partialId = "refresh-test-partial";
+	const std::string failedId = "refresh-test-failed";
+	const std::string missingUpstreamId = "refresh-test-missing-upstream";
+	const std::string internalId = "refresh-test-internal";
+
+	dbClient->execSqlSync("DELETE FROM videos WHERE video_id LIKE 'refresh-test-%'");
+	auto insertVideo = [&](const std::string& id,
+		const std::string& title,
+		const std::string& description,
+		const std::string& videoUrl,
+		int duration,
+		int isExternal,
+		const std::string& type) {
+		dbClient->execSqlSync(
+			"INSERT INTO videos "
+			"(video_id, user_id, title, description, video_url, view_count, duration, "
+			"like_count, status, is_external, type) "
+			"VALUES (?, 'testuser', ?, ?, ?, 7, ?, 8, 2, ?, ?)",
+			id,
+			title,
+			description,
+			videoUrl,
+			duration,
+			isExternal,
+			type
+		);
+	};
+
+	insertVideo(archivedId, "アーカイブ前タイトル", "アーカイブ前説明", "MOCKVIDEO01", 0, 1, "youtube live");
+	insertVideo(activeId, "ライブタイトル", "ライブ説明", "LIVEVIDEO01", 17, 1, "youtube live");
+	insertVideo(premiereId, "プレミアタイトル", "プレミア説明", "PREMVIDEO01", 3600, 1, "youtube live");
+	insertVideo(dayLongId, "長時間タイトル", "長時間説明", "DAYVIDEO001", 0, 1, "youtube live");
+	insertVideo(normalId, "通常タイトル", "通常説明", "MOCKVIDEO01", 123, 1, "youtube");
+	insertVideo(metadataId, "同期前タイトル", "同期前説明", "MOCKVIDEO01", 77, 1, "youtube");
+	insertVideo(partialId, "部分同期前タイトル", "部分同期前説明", "PARTVIDEO01", 88, 1, "youtube");
+	insertVideo(failedId, "失敗前タイトル", "失敗前説明", "FAILVIDEO01", 99, 1, "youtube live");
+	insertVideo(missingUpstreamId, "欠落前タイトル", "欠落前説明", "MISSVIDEO01", 111, 1, "youtube");
+	insertVideo(internalId, "内部タイトル", "内部説明", "/watch/internal", 120, 0, "internal");
+
+	const std::vector<std::string> durationIds = {
+		archivedId,
+		activeId,
+		premiereId,
+		dayLongId,
+		failedId,
+	};
+	for (const auto& id : durationIds) {
+		deleteRedisKeySync("external-video:duration-refresh:" + id);
+	}
+	g_youtubeVideosListCalls.store(0, std::memory_order_relaxed);
+
+	// GETはDB取得だけで、YouTube APIもRedisクールダウンも変更しない。
+	auto getResponse = sendSyncRequest(drogon::Get, "/api/videos/" + activeId);
+	REQUIRE(getResponse != nullptr);
+	CHECK(getResponse->getStatusCode() == drogon::k200OK);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 0);
+	CHECK(!getRedisValueSync("external-video:duration-refresh:" + activeId));
+
+	// 再生時間更新APIは認証を要求するが、投稿者以外でも実行できる。
+	auto unauthorizedDuration = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + activeId + "/duration/refresh",
+		Json::Value::null,
+		{},
+		""
+	);
+	REQUIRE(unauthorizedDuration != nullptr);
+	CHECK(unauthorizedDuration->getStatusCode() == drogon::k401Unauthorized);
+
+	auto archivedResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + archivedId + "/duration/refresh",
+		Json::Value::null,
+		{},
+		"otheruser"
+	);
+	REQUIRE(archivedResponse != nullptr);
+	CHECK(archivedResponse->getStatusCode() == drogon::k200OK);
+	auto archivedJson = archivedResponse->getJsonObject();
+	REQUIRE(archivedJson != nullptr);
+	CHECK((*archivedJson)["status"].asString() == "updated");
+	CHECK((*archivedJson)["quota_units"].asInt() == 1);
+	CHECK((*archivedJson)["video"]["duration"].asInt() == 123);
+	CHECK((*archivedJson)["video"]["type"].asString() == "youtube");
+	CHECK((*archivedJson)["video"]["title"].asString() == "アーカイブ前タイトル");
+	CHECK((*archivedJson)["video"]["description"].asString() == "アーカイブ前説明");
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 1);
+	CHECK(getRedisValueSync("external-video:duration-refresh:" + archivedId) == "1");
+	{
+		std::lock_guard<std::mutex> lock(g_youtubeRequestMutex);
+		CHECK(g_lastYoutubeVideoParts == "snippet,contentDetails");
+		CHECK(g_lastYoutubeVideoIds == "MOCKVIDEO01");
+	}
+
+	auto archivedRows = dbClient->execSqlSync(
+		"SELECT title, description, duration, type, view_count, like_count "
+		"FROM videos WHERE video_id = ?",
+		archivedId
+	);
+	REQUIRE(archivedRows.size() == 1);
+	CHECK(archivedRows[0]["title"].as<std::string>() == "アーカイブ前タイトル");
+	CHECK(archivedRows[0]["description"].as<std::string>() == "アーカイブ前説明");
+	CHECK(archivedRows[0]["duration"].as<int>() == 123);
+	CHECK(archivedRows[0]["type"].as<std::string>() == "youtube");
+	CHECK(archivedRows[0]["view_count"].as<int>() == 7);
+	CHECK(archivedRows[0]["like_count"].as<int>() == 8);
+
+	auto activeResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + activeId + "/duration/refresh",
+		Json::Value::null,
+		{},
+		"otheruser"
+	);
+	REQUIRE(activeResponse != nullptr);
+	CHECK(activeResponse->getStatusCode() == drogon::k200OK);
+	auto activeJson = activeResponse->getJsonObject();
+	REQUIRE(activeJson != nullptr);
+	CHECK((*activeJson)["status"].asString() == "unchanged");
+	CHECK((*activeJson)["reason"].asString() == "broadcast_not_archived");
+	CHECK((*activeJson)["quota_units"].asInt() == 1);
+	CHECK((*activeJson)["video"]["duration"].asInt() == 17);
+	CHECK((*activeJson)["video"]["type"].asString() == "youtube live");
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 2);
+	CHECK(getRedisValueSync("external-video:duration-refresh:" + activeId) == "1");
+
+	auto cooldownResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + activeId + "/duration/refresh",
+		Json::Value::null,
+		{},
+		"otheruser"
+	);
+	REQUIRE(cooldownResponse != nullptr);
+	CHECK(cooldownResponse->getStatusCode() == drogon::k200OK);
+	auto cooldownJson = cooldownResponse->getJsonObject();
+	REQUIRE(cooldownJson != nullptr);
+	CHECK((*cooldownJson)["status"].asString() == "cooldown");
+	CHECK((*cooldownJson)["quota_units"].asInt() == 0);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 2);
+
+	// プレミア公開前・公開中に取得済みの再生時間は上書きしない。
+	auto premiereResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + premiereId + "/duration/refresh"
+	);
+	REQUIRE(premiereResponse != nullptr);
+	CHECK(premiereResponse->getStatusCode() == drogon::k200OK);
+	auto premiereJson = premiereResponse->getJsonObject();
+	REQUIRE(premiereJson != nullptr);
+	CHECK((*premiereJson)["status"].asString() == "unchanged");
+	CHECK((*premiereJson)["reason"].asString() == "broadcast_not_archived");
+	CHECK((*premiereJson)["video"]["duration"].asInt() == 3600);
+	CHECK((*premiereJson)["video"]["type"].asString() == "youtube live");
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 3);
+
+	// ISO 8601の日を含むdurationも秒へ変換する。
+	auto dayLongResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + dayLongId + "/duration/refresh"
+	);
+	REQUIRE(dayLongResponse != nullptr);
+	CHECK(dayLongResponse->getStatusCode() == drogon::k200OK);
+	auto dayLongJson = dayLongResponse->getJsonObject();
+	REQUIRE(dayLongJson != nullptr);
+	CHECK((*dayLongJson)["status"].asString() == "updated");
+	CHECK((*dayLongJson)["video"]["duration"].asInt() == 93784);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 4);
+
+	// 通常のYouTube動画はYouTube APIを呼ばずに終了する。
+	auto normalResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + normalId + "/duration/refresh"
+	);
+	REQUIRE(normalResponse != nullptr);
+	CHECK(normalResponse->getStatusCode() == drogon::k200OK);
+	auto normalJson = normalResponse->getJsonObject();
+	REQUIRE(normalJson != nullptr);
+	CHECK((*normalJson)["status"].asString() == "unchanged");
+	CHECK((*normalJson)["reason"].asString() == "not_live_video");
+	CHECK((*normalJson)["quota_units"].asInt() == 0);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 4);
+
+	// YouTube API失敗時はDBを変更せず、クールダウンで連続リトライを防ぐ。
+	auto failedDurationResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + failedId + "/duration/refresh"
+	);
+	REQUIRE(failedDurationResponse != nullptr);
+	CHECK(failedDurationResponse->getStatusCode() == drogon::k502BadGateway);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 5);
+	CHECK(getRedisValueSync("external-video:duration-refresh:" + failedId) == "1");
+	auto failedDurationRows = dbClient->execSqlSync(
+		"SELECT duration, type FROM videos WHERE video_id = ?",
+		failedId
+	);
+	REQUIRE(failedDurationRows.size() == 1);
+	CHECK(failedDurationRows[0]["duration"].as<int>() == 99);
+	CHECK(failedDurationRows[0]["type"].as<std::string>() == "youtube live");
+
+	auto failedCooldownResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + failedId + "/duration/refresh"
+	);
+	REQUIRE(failedCooldownResponse != nullptr);
+	CHECK(failedCooldownResponse->getStatusCode() == drogon::k200OK);
+	auto failedCooldownJson = failedCooldownResponse->getJsonObject();
+	REQUIRE(failedCooldownJson != nullptr);
+	CHECK((*failedCooldownJson)["status"].asString() == "cooldown");
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 5);
+
+	auto internalDurationResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + internalId + "/duration/refresh"
+	);
+	REQUIRE(internalDurationResponse != nullptr);
+	CHECK(internalDurationResponse->getStatusCode() == drogon::k409Conflict);
+	auto missingDurationResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/refresh-test-not-found/duration/refresh"
+	);
+	REQUIRE(missingDurationResponse != nullptr);
+	CHECK(missingDurationResponse->getStatusCode() == drogon::k404NotFound);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 5);
+
+	// タイトルだけを明示的に同期し、その他の動画情報は保持する。
+	Json::Value titleBody;
+	titleBody["fields"] = Json::Value(Json::arrayValue);
+	titleBody["fields"].append("title");
+	auto metadataResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + metadataId + "/metadata/refresh",
+		titleBody
+	);
+	REQUIRE(metadataResponse != nullptr);
+	CHECK(metadataResponse->getStatusCode() == drogon::k200OK);
+	auto metadataJson = metadataResponse->getJsonObject();
+	REQUIRE(metadataJson != nullptr);
+	CHECK((*metadataJson)["status"].asString() == "updated");
+	CHECK((*metadataJson)["quota_units"].asInt() == 1);
+	CHECK((*metadataJson)["synced_fields"].size() == 1);
+	CHECK((*metadataJson)["synced_fields"][0].asString() == "title");
+	CHECK((*metadataJson)["skipped_fields"].empty());
+	CHECK((*metadataJson)["video"]["title"].asString() == "YouTube同期タイトル");
+	CHECK((*metadataJson)["video"]["description"].asString() == "同期前説明");
+	CHECK((*metadataJson)["video"]["duration"].asInt() == 77);
+	CHECK((*metadataJson)["video"]["type"].asString() == "youtube");
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 6);
+
+	auto metadataRows = dbClient->execSqlSync(
+		"SELECT title, description, duration, type, view_count, like_count "
+		"FROM videos WHERE video_id = ?",
+		metadataId
+	);
+	REQUIRE(metadataRows.size() == 1);
+	CHECK(metadataRows[0]["title"].as<std::string>() == "YouTube同期タイトル");
+	CHECK(metadataRows[0]["description"].as<std::string>() == "同期前説明");
+	CHECK(metadataRows[0]["duration"].as<int>() == 77);
+	CHECK(metadataRows[0]["type"].as<std::string>() == "youtube");
+	CHECK(metadataRows[0]["view_count"].as<int>() == 7);
+	CHECK(metadataRows[0]["like_count"].as<int>() == 8);
+
+	// メタデータ同期は投稿者だけに許可する。
+	auto forbiddenMetadataResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + metadataId + "/metadata/refresh",
+		titleBody,
+		{},
+		"otheruser"
+	);
+	REQUIRE(forbiddenMetadataResponse != nullptr);
+	CHECK(forbiddenMetadataResponse->getStatusCode() == drogon::k403Forbidden);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 6);
+	auto unauthorizedMetadataResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + metadataId + "/metadata/refresh",
+		titleBody,
+		{},
+		""
+	);
+	REQUIRE(unauthorizedMetadataResponse != nullptr);
+	CHECK(unauthorizedMetadataResponse->getStatusCode() == drogon::k401Unauthorized);
+
+	// YouTubeレスポンスで欠落したフィールドだけを更新対象から外す。
+	Json::Value bothFieldsBody;
+	bothFieldsBody["fields"] = Json::Value(Json::arrayValue);
+	bothFieldsBody["fields"].append("title");
+	bothFieldsBody["fields"].append("description");
+	auto partialResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + partialId + "/metadata/refresh",
+		bothFieldsBody
+	);
+	REQUIRE(partialResponse != nullptr);
+	CHECK(partialResponse->getStatusCode() == drogon::k200OK);
+	auto partialJson = partialResponse->getJsonObject();
+	REQUIRE(partialJson != nullptr);
+	CHECK((*partialJson)["status"].asString() == "partial");
+	CHECK((*partialJson)["synced_fields"].size() == 1);
+	CHECK((*partialJson)["synced_fields"][0].asString() == "title");
+	CHECK((*partialJson)["skipped_fields"].size() == 1);
+	CHECK((*partialJson)["skipped_fields"][0].asString() == "description");
+	CHECK((*partialJson)["video"]["title"].asString() == "YouTube同期タイトル");
+	CHECK((*partialJson)["video"]["description"].asString() == "部分同期前説明");
+	CHECK((*partialJson)["video"]["duration"].asInt() == 88);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 7);
+
+	// フィールド指定は省略・空・重複・不明フィールドを拒否する。
+	Json::Value emptyFieldsBody;
+	emptyFieldsBody["fields"] = Json::Value(Json::arrayValue);
+	Json::Value duplicateFieldsBody;
+	duplicateFieldsBody["fields"] = Json::Value(Json::arrayValue);
+	duplicateFieldsBody["fields"].append("title");
+	duplicateFieldsBody["fields"].append("title");
+	Json::Value unsupportedFieldBody;
+	unsupportedFieldBody["fields"] = Json::Value(Json::arrayValue);
+	unsupportedFieldBody["fields"].append("duration");
+	Json::Value additionalPropertyBody = titleBody;
+	additionalPropertyBody["unexpected"] = true;
+	const std::vector<Json::Value> invalidMetadataBodies = {
+		Json::Value(Json::objectValue),
+		Json::Value(Json::arrayValue),
+		emptyFieldsBody,
+		duplicateFieldsBody,
+		unsupportedFieldBody,
+		additionalPropertyBody,
+	};
+	for (const auto& invalidBody : invalidMetadataBodies) {
+		auto invalidResponse = sendSyncRequest(
+			drogon::Post,
+			"/api/ex-videos/" + metadataId + "/metadata/refresh",
+			invalidBody
+		);
+		REQUIRE(invalidResponse != nullptr);
+		CHECK(invalidResponse->getStatusCode() == drogon::k400BadRequest);
+	}
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 7);
+
+	auto failedMetadataResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + failedId + "/metadata/refresh",
+		titleBody
+	);
+	REQUIRE(failedMetadataResponse != nullptr);
+	CHECK(failedMetadataResponse->getStatusCode() == drogon::k502BadGateway);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 8);
+	auto missingUpstreamResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + missingUpstreamId + "/metadata/refresh",
+		titleBody
+	);
+	REQUIRE(missingUpstreamResponse != nullptr);
+	CHECK(missingUpstreamResponse->getStatusCode() == drogon::k502BadGateway);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 9);
+
+	auto internalMetadataResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/" + internalId + "/metadata/refresh",
+		titleBody
+	);
+	REQUIRE(internalMetadataResponse != nullptr);
+	CHECK(internalMetadataResponse->getStatusCode() == drogon::k409Conflict);
+	auto missingMetadataResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/refresh-test-not-found/metadata/refresh",
+		titleBody
+	);
+	REQUIRE(missingMetadataResponse != nullptr);
+	CHECK(missingMetadataResponse->getStatusCode() == drogon::k404NotFound);
+	CHECK(g_youtubeVideosListCalls.load(std::memory_order_relaxed) == 9);
+
+	// 旧バッチAPIは削除されている。
+	auto removedBatchResponse = sendSyncRequest(
+		drogon::Post,
+		"/api/ex-videos/sync",
+		titleBody
+	);
+	REQUIRE(removedBatchResponse != nullptr);
+	CHECK(removedBatchResponse->getStatusCode() == drogon::k404NotFound);
+
+	for (const auto& id : durationIds) {
+		deleteRedisKeySync("external-video:duration-refresh:" + id);
+	}
+	dbClient->execSqlSync("DELETE FROM videos WHERE video_id LIKE 'refresh-test-%'");
+}
 DROGON_TEST(SearchTest)
 {
 	// 動画を投稿

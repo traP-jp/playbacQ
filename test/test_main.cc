@@ -1,7 +1,9 @@
 #define DROGON_TEST_MAIN
 #include <drogon/drogon_test.h>
 #include <drogon/drogon.h>
+#include <atomic>
 #include <mutex>
+#include <string>
 #include <vector>
 #include <condition_variable>
 
@@ -9,6 +11,10 @@
 std::mutex g_modalMutex;
 std::vector<std::string> g_modalReceivedVideoIds;
 std::condition_variable g_modalCv;
+std::atomic<unsigned int> g_youtubeVideosListCalls{0};
+std::mutex g_youtubeRequestMutex;
+std::string g_lastYoutubeVideoParts;
+std::string g_lastYoutubeVideoIds;
 
 int main(int argc, char** argv)
 {
@@ -53,6 +59,56 @@ int main(int argc, char** argv)
                 callback(resp);
             },
             {drogon::Post});
+
+        // YouTube videos.list モック
+        drogon::app().registerHandler(
+            "/youtube/v3/videos",
+            [](const drogon::HttpRequestPtr& req,
+               std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                g_youtubeVideosListCalls.fetch_add(1, std::memory_order_relaxed);
+                const std::string videoId = req->getParameter("id");
+                {
+                    std::lock_guard<std::mutex> lock(g_youtubeRequestMutex);
+                    g_lastYoutubeVideoParts = req->getParameter("part");
+                    g_lastYoutubeVideoIds = videoId;
+                }
+
+                if (videoId == "FAILVIDEO01") {
+                    auto error = drogon::HttpResponse::newHttpResponse();
+                    error->setStatusCode(drogon::k500InternalServerError);
+                    callback(error);
+                    return;
+                }
+
+                Json::Value body;
+                body["items"] = Json::Value(Json::arrayValue);
+                if (videoId == "MISSVIDEO01") {
+                    callback(drogon::HttpResponse::newHttpJsonResponse(body));
+                    return;
+                }
+
+                const bool partialVideo = videoId == "PARTVIDEO01";
+                const bool activeLive = videoId == "LIVEVIDEO01";
+                const bool upcomingPremiere = videoId == "PREMVIDEO01";
+                const bool dayLongVideo = videoId == "DAYVIDEO001";
+
+                Json::Value item;
+                item["id"] = videoId;
+                item["snippet"]["title"] = "YouTube同期タイトル";
+                if (!partialVideo) {
+                    item["snippet"]["description"] = "YouTube同期説明";
+                }
+                item["snippet"]["liveBroadcastContent"] = activeLive
+                    ? "live"
+                    : upcomingPremiere ? "upcoming" : "none";
+                item["contentDetails"]["duration"] = activeLive
+                    ? "PT0S"
+                    : upcomingPremiere ? "PT1H"
+                    : dayLongVideo ? "P1DT2H3M4S" : "PT2M3S";
+                body["items"].append(std::move(item));
+                callback(drogon::HttpResponse::newHttpJsonResponse(body));
+            },
+            {drogon::Get});
 
         app().loadConfigFile("config.test.json");
         app().getLoop()->queueInLoop([&p1]() { p1.set_value(); });
