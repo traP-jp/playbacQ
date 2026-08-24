@@ -507,13 +507,9 @@ drogon::Task<drogon::HttpResponsePtr> videos::refreshExVideoDuration(
 			);
 		}
 
-		co_await dbClient->execSqlCoro(
-			"UPDATE videos SET duration = ?, type = 'youtube' "
-			"WHERE video_id = ? AND is_external = 1 AND type = 'youtube live'",
-			*videoInfo->duration,
-			id
-		);
-		video = co_await mapper.findByPrimaryKey(id);
+		video.setDuration(*videoInfo->duration);
+		video.setType("youtube");
+		co_await mapper.update(video);
 		co_return durationResponse("updated", video, 1);
 	}
 	catch (const drogon::orm::UnexpectedRows&) {
@@ -584,25 +580,14 @@ drogon::Task<drogon::HttpResponsePtr> videos::refreshExVideoMetadata(
 			fields->contains("title") && videoInfo->title.has_value();
 		const bool updateDescription =
 			fields->contains("description") && videoInfo->description.has_value();
-		if (updateTitle && updateDescription) {
-			co_await dbClient->execSqlCoro(
-				"UPDATE videos SET title = ?, description = ? WHERE video_id = ?",
-				*videoInfo->title,
-				*videoInfo->description,
-				id
-			);
-		} else if (updateTitle) {
-			co_await dbClient->execSqlCoro(
-				"UPDATE videos SET title = ? WHERE video_id = ?",
-				*videoInfo->title,
-				id
-			);
-		} else if (updateDescription) {
-			co_await dbClient->execSqlCoro(
-				"UPDATE videos SET description = ? WHERE video_id = ?",
-				*videoInfo->description,
-				id
-			);
+		if (updateTitle) {
+			video.setTitle(*videoInfo->title);
+		}
+		if (updateDescription) {
+			video.setDescription(*videoInfo->description);
+		}
+		if (updateTitle || updateDescription) {
+			co_await mapper.update(video);
 		}
 
 		Json::Value syncedFields(Json::arrayValue);
@@ -614,7 +599,6 @@ drogon::Task<drogon::HttpResponsePtr> videos::refreshExVideoMetadata(
 			(available ? syncedFields : skippedFields).append(field);
 		}
 
-		video = co_await mapper.findByPrimaryKey(id);
 		Json::Value body;
 		if (syncedFields.empty()) {
 			body["status"] = "skipped";
