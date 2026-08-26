@@ -13,7 +13,8 @@ struct allStampsCacheEntry {
 };
 
 struct stampImageCacheEntry {
-  std::string imageBase64;
+  std::string imageRawData;
+  std::string contentType;
   std::chrono::steady_clock::time_point timestamp;
 };
 
@@ -38,7 +39,7 @@ public:
   void initAndStart(const Json::Value& config) override;
 
   drogon::Task<std::expected<Json::Value, drogon::HttpResponsePtr>> fetchAllStamps();
-  drogon::Task<std::expected<std::string, drogon::HttpResponsePtr>> getStampImage(std::string id);
+  drogon::Task<std::expected<std::pair<std::string, std::string>, drogon::HttpResponsePtr>> getStampImage(std::string id);
   /// This method must be called by drogon to shutdown the plugin.
   /// It must be implemented by the user.
   void shutdown() override;

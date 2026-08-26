@@ -15,7 +15,7 @@ drogon::Task<drogon::HttpResponsePtr> traq_api::fetchAllStamps([[maybe_unused]] 
     if (!result.has_value()) {
         co_return result.error();
     }
-    co_return drogon::HttpResponse::newHttpJsonResponse(result.value());
+    co_return drogon::HttpResponse::newHttpJsonResponse(std::move(result.value()));
 }
 
 drogon::Task<drogon::HttpResponsePtr> traq_api::getStampImage([[maybe_unused]] HttpRequestPtr req, std::string id) {
@@ -31,5 +31,10 @@ drogon::Task<drogon::HttpResponsePtr> traq_api::getStampImage([[maybe_unused]] H
     if (!result.has_value()) {
         co_return result.error();
     }
-    co_return drogon::HttpResponse::newHttpJsonResponse(result.value());
+    auto resp = drogon::HttpResponse::newHttpResponse();
+    resp->setStatusCode(drogon::k200OK);
+    resp->setContentTypeCode(drogon::CT_CUSTOM);
+    resp->setContentTypeString(result.value().second);
+    resp->setBody(std::move(result.value().first));
+    co_return resp;
 }

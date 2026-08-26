@@ -102,14 +102,14 @@ drogon::Task<std::expected<Json::Value, drogon::HttpResponsePtr>> traQAPI::fetch
     co_return result_array;
 }
 
-drogon::Task<std::expected<std::string, drogon::HttpResponsePtr>> traQAPI::getStampImage(std::string id)
+drogon::Task<std::expected<std::pair<std::string, std::string>, drogon::HttpResponsePtr>> traQAPI::getStampImage(std::string id)
 {
     {
         // キャッシュが有効であればキャッシュを返す
         std::shared_lock lock(mutex);
         auto it = stampImageCache.find(id);
         if (it != stampImageCache.end() && std::chrono::steady_clock::now() - it->second.timestamp < cacheDuration) {
-            co_return it->second.imageBase64;
+            co_return std::make_pair(it->second.imageRawData, it->second.contentType);
         }
     }
 
@@ -125,8 +125,12 @@ drogon::Task<std::expected<std::string, drogon::HttpResponsePtr>> traQAPI::getSt
     std::string imageData = std::string(resp->getBody());
     // キャッシュに保存
     std::unique_lock lock(mutex);
-    stampImageCache[id] = { imageData, std::chrono::steady_clock::now() };
-    co_return imageData;
+    std::string contentType = resp->getHeader("Content-Type");
+    if (contentType.empty()) {
+        contentType = "image/png";
+    }
+    stampImageCache[id] = { imageData, contentType, std::chrono::steady_clock::now() };
+    co_return std::make_pair(imageData, contentType);
 }
 
 void traQAPI::shutdown()
