@@ -316,20 +316,20 @@ DROGON_TEST(ExternalVideoRefreshTest)
 		int duration,
 		int isExternal,
 		const std::string& type) {
-		dbClient->execSqlSync(
-			"INSERT INTO videos "
-			"(video_id, user_id, title, description, video_url, view_count, duration, "
-			"like_count, status, is_external, type) "
-			"VALUES (?, 'testuser', ?, ?, ?, 7, ?, 8, 2, ?, ?)",
-			id,
-			title,
-			description,
-			videoUrl,
-			duration,
-			isExternal,
-			type
-		);
-	};
+			dbClient->execSqlSync(
+				"INSERT INTO videos "
+				"(video_id, user_id, title, description, video_url, view_count, duration, "
+				"like_count, status, is_external, type) "
+				"VALUES (?, 'testuser', ?, ?, ?, 7, ?, 8, 2, ?, ?)",
+				id,
+				title,
+				description,
+				videoUrl,
+				duration,
+				isExternal,
+				type
+			);
+		};
 
 	insertVideo(archivedId, "アーカイブ前タイトル", "アーカイブ前説明", "MOCKVIDEO01", 0, 1, "youtube live");
 	insertVideo(activeId, "ライブタイトル", "ライブ説明", "LIVEVIDEO01", 17, 1, "youtube live");
@@ -884,8 +884,7 @@ DROGON_TEST(ProgressTest)
 			"VALUES (?, 'test_user', 'https://example.com/video.mp4', '進捗テスト', 1)",
 			videoId
 		);
-	}
-	catch (const drogon::orm::DrogonDbException& e) {
+	} catch (const drogon::orm::DrogonDbException& e) {
 		std::cerr << "DB Error: " << e.base().what() << std::endl;
 	}
 
@@ -917,8 +916,7 @@ DROGON_TEST(ProgressTest)
 	// クリーンアップ
 	try {
 		dbClient->execSqlSync("DELETE FROM videos WHERE video_id = ?", videoId);
-	}
-	catch (const drogon::orm::DrogonDbException& e) {
+	} catch (const drogon::orm::DrogonDbException& e) {
 		std::cerr << "DB Cleanup Error: " << e.base().what() << std::endl;
 	}
 }
@@ -1235,12 +1233,12 @@ DROGON_TEST(AuthRedirectTest)
 		"/?from=login"
 	};
 	for (const auto& redirectPath : redirectPaths) {
-		for (const auto& redirect : {redirectPath, frontendOrigin + redirectPath}) {
+		for (const auto& redirect : { redirectPath, frontendOrigin + redirectPath }) {
 			auto validResp = sendSyncRequest(
 				drogon::Get,
 				"/api/auth/login",
 				Json::Value::null,
-				{{"redirect", redirect}}
+				{ {"redirect", redirect} }
 			);
 			REQUIRE(validResp != nullptr);
 			CHECK(validResp->getStatusCode() == drogon::k302Found);
@@ -1252,7 +1250,7 @@ DROGON_TEST(AuthRedirectTest)
 		drogon::Get,
 		"/api/auth/login",
 		Json::Value::null,
-		{{"redirect", frontendOrigin}}
+		{ {"redirect", frontendOrigin} }
 	);
 	REQUIRE(originOnlyResp != nullptr);
 	CHECK(originOnlyResp->getStatusCode() == drogon::k302Found);
@@ -1278,7 +1276,7 @@ DROGON_TEST(AuthRedirectTest)
 			drogon::Get,
 			"/api/auth/login",
 			Json::Value::null,
-			{{"redirect", unsafeRedirect}}
+			{ {"redirect", unsafeRedirect} }
 		);
 		REQUIRE(unsafeResp != nullptr);
 		CHECK(unsafeResp->getStatusCode() == drogon::k302Found);
@@ -1438,4 +1436,41 @@ DROGON_TEST(LIKE_TEST)
 
 	// クリーンアップ
 	CHECK(deleteVideo(videoId) == true);
+}
+
+// スタンプ一覧取得テスト
+DROGON_TEST(GET_ALL_STAMPS_TEST)
+{
+	auto resp = sendSyncRequest(drogon::Get, "/traq-api/stamps");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k200OK);
+	auto json = resp->getJsonObject();
+	REQUIRE(json != nullptr);
+	CHECK(json->isArray());
+	CHECK(json->size() == 2);
+	CHECK((*json)[0]["id"].asString() == "stamp-id-001");
+	CHECK((*json)[0]["name"].asString() == "sample_stamp_1");
+	CHECK((*json)[1]["id"].asString() == "stamp-id-002");
+	CHECK((*json)[1]["name"].asString() == "sample_stamp_2");
+
+	// キャッシュテスト
+	auto cachedResp = sendSyncRequest(drogon::Get, "/traq-api/stamps");
+	REQUIRE(cachedResp != nullptr);
+	CHECK(cachedResp->getStatusCode() == drogon::k200OK);
+}
+
+// スタンプ画像取得テスト
+DROGON_TEST(GET_STAMP_IMAGE_TEST)
+{
+	const std::string stampId = "stamp-id-001";
+	auto resp = sendSyncRequest(drogon::Get, "/traq-api/stamps/" + stampId + "/image");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k200OK);
+	CHECK(resp->getHeader("Content-Type") == "image/png");
+	CHECK(std::string(resp->getBody()) == "DUMMY_PNG_DATA_FOR_" + stampId);
+
+	// 存在しないスタンプ画像取得時のエラー確認
+	auto notFoundResp = sendSyncRequest(drogon::Get, "/traq-api/stamps/not-found-stamp/image");
+	REQUIRE(notFoundResp != nullptr);
+	CHECK(notFoundResp->getStatusCode() == drogon::k500InternalServerError);
 }

@@ -276,6 +276,11 @@
             "name": "S3Plugin",
             "dependencies": [],
             "config": {}
+        },
+        {
+            "name": "traQAPI",
+            "dependencies": [],
+            "config": {}
         }
     ],
     "custom_config": {

@@ -11,7 +11,7 @@
 std::mutex g_modalMutex;
 std::vector<std::string> g_modalReceivedVideoIds;
 std::condition_variable g_modalCv;
-std::atomic<unsigned int> g_youtubeVideosListCalls{0};
+std::atomic<unsigned int> g_youtubeVideosListCalls{ 0 };
 std::mutex g_youtubeRequestMutex;
 std::string g_lastYoutubeVideoParts;
 std::string g_lastYoutubeVideoIds;
@@ -47,73 +47,117 @@ int main(int argc, char** argv)
         drogon::app().registerHandler(
             "/",
             [](const drogon::HttpRequestPtr& req,
-               std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-                auto json = req->getJsonObject();
-                if (json && json->isMember("video_id")) {
-                    std::lock_guard<std::mutex> lock(g_modalMutex);
-                    g_modalReceivedVideoIds.push_back((*json)["video_id"].asString());
-                    g_modalCv.notify_all();
-                }
-                auto resp = drogon::HttpResponse::newHttpResponse();
-                resp->setStatusCode(drogon::k200OK);
-                callback(resp);
+                std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                    auto json = req->getJsonObject();
+                    if (json && json->isMember("video_id")) {
+                        std::lock_guard<std::mutex> lock(g_modalMutex);
+                        g_modalReceivedVideoIds.push_back((*json)["video_id"].asString());
+                        g_modalCv.notify_all();
+                    }
+                    auto resp = drogon::HttpResponse::newHttpResponse();
+                    resp->setStatusCode(drogon::k200OK);
+                    callback(resp);
             },
-            {drogon::Post});
+            { drogon::Post });
 
         // YouTube videos.list モック
         drogon::app().registerHandler(
             "/youtube/v3/videos",
             [](const drogon::HttpRequestPtr& req,
-               std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-                g_youtubeVideosListCalls.fetch_add(1, std::memory_order_relaxed);
-                const std::string videoId = req->getParameter("id");
-                {
-                    std::lock_guard<std::mutex> lock(g_youtubeRequestMutex);
-                    g_lastYoutubeVideoParts = req->getParameter("part");
-                    g_lastYoutubeVideoIds = videoId;
-                }
+                std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                    g_youtubeVideosListCalls.fetch_add(1, std::memory_order_relaxed);
+                    const std::string videoId = req->getParameter("id");
+                    {
+                        std::lock_guard<std::mutex> lock(g_youtubeRequestMutex);
+                        g_lastYoutubeVideoParts = req->getParameter("part");
+                        g_lastYoutubeVideoIds = videoId;
+                    }
 
-                if (videoId == "FAILVIDEO01") {
-                    auto error = drogon::HttpResponse::newHttpResponse();
-                    error->setStatusCode(drogon::k500InternalServerError);
-                    callback(error);
-                    return;
-                }
+                    if (videoId == "FAILVIDEO01") {
+                        auto error = drogon::HttpResponse::newHttpResponse();
+                        error->setStatusCode(drogon::k500InternalServerError);
+                        callback(error);
+                        return;
+                    }
 
-                Json::Value body;
-                body["items"] = Json::Value(Json::arrayValue);
-                if (videoId == "MISSVIDEO01") {
+                    Json::Value body;
+                    body["items"] = Json::Value(Json::arrayValue);
+                    if (videoId == "MISSVIDEO01") {
+                        callback(drogon::HttpResponse::newHttpJsonResponse(body));
+                        return;
+                    }
+
+                    const bool partialVideo = videoId == "PARTVIDEO01";
+                    const bool activeLive = videoId == "LIVEVIDEO01";
+                    const bool upcomingPremiere = videoId == "PREMVIDEO01";
+                    const bool dayLongVideo = videoId == "DAYVIDEO001";
+
+                    Json::Value item;
+                    item["id"] = videoId;
+                    item["snippet"]["title"] = "YouTube同期タイトル";
+                    if (!partialVideo) {
+                        item["snippet"]["description"] = "YouTube同期説明";
+                    }
+                    item["snippet"]["liveBroadcastContent"] = activeLive
+                        ? "live"
+                        : upcomingPremiere ? "upcoming" : "none";
+                    item["contentDetails"]["duration"] = activeLive
+                        ? "PT0S"
+                        : upcomingPremiere ? "PT1H"
+                        : dayLongVideo ? "P1DT2H3M4S" : "PT2M3S";
+                    body["items"].append(std::move(item));
                     callback(drogon::HttpResponse::newHttpJsonResponse(body));
-                    return;
-                }
-
-                const bool partialVideo = videoId == "PARTVIDEO01";
-                const bool activeLive = videoId == "LIVEVIDEO01";
-                const bool upcomingPremiere = videoId == "PREMVIDEO01";
-                const bool dayLongVideo = videoId == "DAYVIDEO001";
-
-                Json::Value item;
-                item["id"] = videoId;
-                item["snippet"]["title"] = "YouTube同期タイトル";
-                if (!partialVideo) {
-                    item["snippet"]["description"] = "YouTube同期説明";
-                }
-                item["snippet"]["liveBroadcastContent"] = activeLive
-                    ? "live"
-                    : upcomingPremiere ? "upcoming" : "none";
-                item["contentDetails"]["duration"] = activeLive
-                    ? "PT0S"
-                    : upcomingPremiere ? "PT1H"
-                    : dayLongVideo ? "P1DT2H3M4S" : "PT2M3S";
-                body["items"].append(std::move(item));
-                callback(drogon::HttpResponse::newHttpJsonResponse(body));
             },
-            {drogon::Get});
+            { drogon::Get });
 
         app().loadConfigFile("config.test.json");
         app().getLoop()->queueInLoop([&p1]() { p1.set_value(); });
         app().run();
         });
+    // traQ API スタンプ一覧モック: GET /api/v3/stamps
+    drogon::app().registerHandler(
+        "/api/v3/stamps",
+        [](const drogon::HttpRequestPtr& req,
+            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                Json::Value body(Json::arrayValue);
+                Json::Value stamp1;
+                stamp1["id"] = "stamp-id-001";
+                stamp1["name"] = "sample_stamp_1";
+                stamp1["creatorId"] = "user-id-001";
+                body.append(stamp1);
+
+                Json::Value stamp2;
+                stamp2["id"] = "stamp-id-002";
+                stamp2["name"] = "sample_stamp_2";
+                stamp2["creatorId"] = "user-id-002";
+                body.append(stamp2);
+
+                callback(drogon::HttpResponse::newHttpJsonResponse(body));
+        },
+        { drogon::Get });
+
+    // traQ API スタンプ画像取得モック: GET /api/v3/stamps/{id}/image
+    drogon::app().registerHandler(
+        "/api/v3/stamps/{stampId}/image",
+        [](const drogon::HttpRequestPtr& req,
+            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+            const std::string& stampId) {
+                if (stampId == "not-found-stamp") {
+                    auto resp = drogon::HttpResponse::newHttpResponse();
+                    resp->setStatusCode(drogon::k404NotFound);
+                    resp->setBody("Stamp not found");
+                    callback(resp);
+                    return;
+                }
+
+                auto resp = drogon::HttpResponse::newHttpResponse();
+                resp->setStatusCode(drogon::k200OK);
+                resp->setContentTypeCode(drogon::CT_CUSTOM);
+                resp->setContentTypeString("image/png");
+                resp->setBody("DUMMY_PNG_DATA_FOR_" + stampId);
+                callback(resp);
+        },
+        { drogon::Get });
 
     // The future is only satisfied after the event loop started
     f1.get();
