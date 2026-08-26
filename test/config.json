@@ -341,6 +341,11 @@
             "name": "S3Plugin",
             "dependencies": [],
             "config": {}
+        },
+        {
+            "name": "traQAPI",
+            "dependencies": [],
+            "config": {}
         }
     ],
     "redis_clients": [

@@ -1148,6 +1148,69 @@ paths:
           description: "アクセスが拒否されました。"
         "404":
           description: "ユーザーが見つかりませんでした。"
+  /traq-api/stamps:
+    get:
+      summary: "スタンプリストの取得"
+      description: "スタンプのリストを取得します。"
+      operationId: getTraqStamps
+      x-tested: false
+      tags:
+        - stamp
+      responses:
+        "200":
+          description: "スタンプリストを返します。"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                      example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                      description: "スタンプUUID"
+                    name:
+                      type: string
+                      example: "thanks-nya"
+                      pattern: "^[a-zA-Z0-9_-]{1,32}$"
+                      description: "スタンプの名前"
+        "403":
+          description: "アクセスが拒否されました。"
+        "500":
+          description: "サーバー内部エラー"
+  /traq-api/stamps/{stampId}/image:
+    get:
+      summary: "スタンプ画像を取得"
+      description: "指定したIDのスタンプ画像を返します。"
+      operationId: getTraqStampImage
+      x-tested: false
+      tags:
+        - stamp
+      parameters:
+        - name: stampId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: "スタンプUUID"
+      responses:
+        "200":
+          description: "スタンプ画像を返します。"
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+                description: "スタンプ画像のバイナリデータ"
+        "403":
+          description: "アクセスが拒否されました。"
+        "404":
+          description: "スタンプが見つかりませんでした。"
+        "500":
+          description: "サーバー内部エラー"
 components:
   schemas:
     Video:
