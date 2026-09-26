@@ -16,13 +16,16 @@ struct stampImageCacheEntry {
   std::string imageRawData;
   std::string contentType;
   std::chrono::steady_clock::time_point timestamp;
+  std::chrono::steady_clock::time_point lastAccessed;
 };
 
 class traQAPI : public drogon::Plugin<traQAPI>
 {
 private:
   // キャッシュの有効期限は2週間とする
-  const std::chrono::weeks cacheDuration{ 2 };
+  constexpr static std::chrono::weeks cacheDuration{ 2 };
+  // スタンプ画像のキャッシュサイズの上限(最大50MBまでキャッシュする)
+  constexpr static int maxStampImageCacheSize = 50 * 1024 * 1024;
 
   std::string Token;
   std::string ApiUrl;
