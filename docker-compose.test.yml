@@ -13,12 +13,12 @@ services:
       - DB_PASSWORD=test_pass
       - MINIO_ROOT_USER=test_minio
       - MINIO_ROOT_PASSWORD=test_minio_pass
-      - MINIO_ENDPOINT=test-minio:9090
+      - MINIO_ENDPOINT=test-minio:9000
       - MYSQL_ROOT_PASSWORD=test_root_pass
       - MYSQL_DATABASE=playbacq_test
       - MYSQL_USER=test_user
       - MYSQL_PASSWORD=test_pass
-      - S3_ENDPOINT=http://test-minio:9090
+      - S3_ENDPOINT=http://test-minio:9000
       - MODAL_HOST=http://127.0.0.1:9999
       - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-test-key}
       - YOUTUBE_API_BASE_URL=http://127.0.0.1:9999
@@ -30,7 +30,7 @@ services:
       test-redis:
         condition: service_healthy
       test-minio:
-        condition: service_started
+        condition: service_healthy
       test-minio-init:
         condition: service_completed_successfully
     # テストのビルドと実行を行うコマンド
@@ -79,20 +79,31 @@ services:
       retries: 5
 
   test-minio:
-    image: adobe/s3mock:latest
+    image: minio/minio:latest
+    command: server /data
+    tmpfs:
+      - /data # MinIOのオブジェクトもすべてメモリ上に配置
+    environment:
+      - MINIO_ROOT_USER=test_minio
+      - MINIO_ROOT_PASSWORD=test_minio_pass
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
 
   test-minio-init:
-    image: amazon/aws-cli:latest
+    image: minio/mc:latest
     depends_on:
       test-minio:
-        condition: service_started
+        condition: service_healthy
     environment:
-      - AWS_ACCESS_KEY_ID=test_minio
-      - AWS_SECRET_ACCESS_KEY=test_minio_pass
-      - AWS_DEFAULT_REGION=us-east-1
+      - MINIO_ROOT_USER=test_minio
+      - MINIO_ROOT_PASSWORD=test_minio_pass
     entrypoint: >
       sh -c "
-        until aws --no-sign-request --endpoint-url=http://test-minio:9090 s3api list-buckets >/dev/null 2>&1; do sleep 1; done &&
-        aws --no-sign-request --endpoint-url=http://test-minio:9090 s3api create-bucket --bucket videos 2>/dev/null || true &&
-        aws --no-sign-request --endpoint-url=http://test-minio:9090 s3api create-bucket --bucket videofiles 2>/dev/null || true
+        mc alias set testminio http://test-minio:9000 test_minio test_minio_pass &&
+        mc mb testminio/videos --ignore-existing &&
+        mc mb testminio/videofiles --ignore-existing &&
+        mc anonymous set download testminio/videofiles
       "
