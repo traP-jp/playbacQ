@@ -68,7 +68,7 @@ services:
       timeout: 3s
       retries: 10
   minio:
-    image: minio/minio:latest
+    image: pgsty/minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
@@ -87,7 +87,7 @@ services:
       timeout: 3s
       retries: 10
   minio-init:
-    image: minio/mc:latest
+    image: pgsty/mc
     depends_on:
       minio:
         condition: service_healthy

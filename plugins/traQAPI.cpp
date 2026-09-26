@@ -43,7 +43,8 @@ drogon::Task<drogon::HttpResponsePtr> traQAPI::getFromTraQAPI(const std::string&
             co_return errorResp;
         }
         co_return resp;
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e) {
         std::cerr << "Error fetching stamps: " << e.what() << std::endl;
         auto resp = drogon::HttpResponse::newHttpResponse();
         resp->setStatusCode(drogon::k500InternalServerError);
@@ -108,8 +109,11 @@ drogon::Task<std::expected<std::pair<std::string, std::string>, drogon::HttpResp
         // キャッシュが有効であればキャッシュを返す
         std::shared_lock lock(mutex);
         auto it = stampImageCache.find(id);
-        if (it != stampImageCache.end() && std::chrono::steady_clock::now() - it->second.timestamp < cacheDuration) {
-            co_return std::make_pair(it->second.imageRawData, it->second.contentType);
+        if (it != stampImageCache.end()) {
+            if (std::chrono::steady_clock::now() - it->second.timestamp < cacheDuration) {
+                it->second.lastAccessed.store(std::chrono::steady_clock::now(), std::memory_order_relaxed);
+                co_return std::make_pair(it->second.imageRawData, it->second.contentType);
+            }
         }
     }
 
@@ -124,13 +128,35 @@ drogon::Task<std::expected<std::pair<std::string, std::string>, drogon::HttpResp
     }
     std::string imageData = std::string(resp->getBody());
     // キャッシュに保存
-    std::unique_lock lock(mutex);
     std::string contentType = resp->getHeader("Content-Type");
     if (contentType.empty()) {
         contentType = "image/png";
     }
-    stampImageCache[id] = { imageData, contentType, std::chrono::steady_clock::now() };
-    co_return std::make_pair(imageData, contentType);
+    {
+        std::unique_lock lock(mutex);
+        auto now = std::chrono::steady_clock::now();
+        if (auto it = stampImageCache.find(id); it != stampImageCache.end()) {
+            // キャッシュ期限切れの場合、上書き
+            it->second.imageRawData = imageData;
+            it->second.contentType = contentType;
+            it->second.timestamp = now;
+            it->second.lastAccessed.store(now, std::memory_order_relaxed);
+        } else {
+            // 新規追加
+            stampImageCache.try_emplace(id, imageData, contentType, now, now);
+        }
+        if (stampImageCache.size() > maxStampImageCacheSize) {
+            // キャッシュサイズが上限を超えた場合、最も古いアクセスのスタンプ画像を削除する
+            auto oldest = std::min_element(stampImageCache.begin(), stampImageCache.end(),
+                [](const auto& a, const auto& b) {
+                    return a.second.lastAccessed.load(std::memory_order_relaxed) < b.second.lastAccessed.load(std::memory_order_relaxed);
+                });
+            if (oldest != stampImageCache.end()) {
+                stampImageCache.erase(oldest);
+            }
+        }
+    }
+    co_return std::make_pair(std::move(imageData), std::move(contentType));
 }
 
 void traQAPI::shutdown()
