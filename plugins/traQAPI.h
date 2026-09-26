@@ -6,6 +6,7 @@
 #include <expected>
 #include <shared_mutex>
 #include <chrono>
+#include <atomic>
 
 struct allStampsCacheEntry {
   Json::Value stamps;
@@ -16,7 +17,11 @@ struct stampImageCacheEntry {
   std::string imageRawData;
   std::string contentType;
   std::chrono::steady_clock::time_point timestamp;
-  std::chrono::steady_clock::time_point lastAccessed;
+  std::atomic<std::chrono::steady_clock::time_point> lastAccessed;
+
+  stampImageCacheEntry(const std::string& data, const std::string& type, std::chrono::steady_clock::time_point ts, std::chrono::steady_clock::time_point lastAccessedTime)
+    : imageRawData(std::move(data)), contentType(std::move(type)), timestamp(ts), lastAccessed(lastAccessedTime) {
+  }
 };
 
 class traQAPI : public drogon::Plugin<traQAPI>
