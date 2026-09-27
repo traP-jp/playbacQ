@@ -12,17 +12,22 @@
 using namespace api;
 
 drogon::Task<drogon::HttpResponsePtr> comments::getComments([[maybe_unused]] HttpRequestPtr req, std::string videoId) {
-    drogon::orm::CoroMapper<drogon_model::playbacq::Comments> mapper(drogon::app().getDbClient());
-    drogon::orm::Criteria criteria;
-    criteria = criteria && drogon::orm::Criteria(drogon_model::playbacq::Comments::Cols::_video_id, drogon::orm::CompareOperator::EQ, videoId);
+    auto dbClient = drogon::app().getDbClient();
+    drogon::orm::CoroMapper<drogon_model::playbacq::Videos> videoMapper(dbClient);
+    drogon::orm::CoroMapper<drogon_model::playbacq::Comments> commentMapper(dbClient);
     try {
-        auto comments = co_await mapper.findBy(criteria);
-        if (comments.empty()) {
+        // 動画が存在するか確認
+        drogon::orm::Criteria videoCriteria(drogon_model::playbacq::Videos::Cols::_video_id, drogon::orm::CompareOperator::EQ, videoId);
+        auto videoCount = co_await videoMapper.count(videoCriteria);
+        if (videoCount == 0) {
             auto resp = drogon::HttpResponse::newHttpResponse();
             resp->setStatusCode(drogon::HttpStatusCode::k404NotFound);
             resp->setBody("Video not found");
             co_return resp;
         }
+        // コメントを取得
+        drogon::orm::Criteria commentCriteria(drogon_model::playbacq::Comments::Cols::_video_id, drogon::orm::CompareOperator::EQ, videoId);
+        auto comments = co_await commentMapper.findBy(commentCriteria);
         Json::Value jsonResponse(Json::arrayValue);
         for (const auto& comment : comments) {
             jsonResponse.append(comment.toJson());
