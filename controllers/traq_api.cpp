@@ -33,6 +33,7 @@ drogon::Task<drogon::HttpResponsePtr> traq_api::getStampImage([[maybe_unused]] H
     }
     auto resp = drogon::HttpResponse::newHttpResponse();
     resp->setStatusCode(drogon::k200OK);
+    resp->addHeader("Cache-Control", "public, max-age=120960, immutable");
     resp->setContentTypeCode(drogon::CT_CUSTOM);
     resp->setContentTypeString(result.value().second);
     resp->setBody(std::move(result.value().first));

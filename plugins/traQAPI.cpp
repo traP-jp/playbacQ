@@ -145,7 +145,7 @@ drogon::Task<std::expected<std::pair<std::string, std::string>, drogon::HttpResp
             // 新規追加
             stampImageCache.try_emplace(id, imageData, contentType, now, now);
         }
-        while (stampImageCache.size() > maxStampImageCacheSize) {
+        while (stampImageCache.size() * sizeof(stampImageCacheEntry) > maxStampImageCacheSize) {
             // キャッシュサイズが上限を超えた場合、最も古いアクセスのスタンプ画像を削除する
             auto oldest = std::min_element(stampImageCache.begin(), stampImageCache.end(),
                 [](const auto& a, const auto& b) {
