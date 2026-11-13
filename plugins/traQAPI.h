@@ -39,7 +39,11 @@ private:
   allStampsCacheEntry allStampsCache;
   std::unordered_map<std::string, stampImageCacheEntry> stampImageCache;
 
-  drogon::Task<drogon::HttpResponsePtr> getFromTraQAPI(const std::string& endpoint);
+  drogon::Task<drogon::HttpResponsePtr> getFromTraQAPI(
+    const std::string& endpoint,
+    const std::unordered_map<std::string, std::string>& params = {}
+  );
+
 public:
   traQAPI() {}
   /// This method must be called by drogon to initialize and start the plugin.
@@ -48,8 +52,8 @@ public:
 
   drogon::Task<std::expected<Json::Value, drogon::HttpResponsePtr>> fetchAllStamps();
   drogon::Task<std::expected<std::pair<std::string, std::string>, drogon::HttpResponsePtr>> getStampImage(std::string id);
+  drogon::Task<drogon::HttpResponsePtr> getChannels(std::string query = "");
   /// This method must be called by drogon to shutdown the plugin.
   /// It must be implemented by the user.
   void shutdown() override;
 };
-

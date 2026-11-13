@@ -17,8 +17,10 @@ void traQAPI::initAndStart(const Json::Value& config)
     client = drogon::HttpClient::newHttpClient(ApiUrl);
 }
 
-drogon::Task<drogon::HttpResponsePtr> traQAPI::getFromTraQAPI(const std::string& endpoint)
-{
+drogon::Task<drogon::HttpResponsePtr> traQAPI::getFromTraQAPI(
+    const std::string& endpoint,
+    const std::unordered_map<std::string, std::string>& params
+) {
     if (Token.empty()) {
         std::cerr << "TRAQ_TOKEN is not set. Cannot make request to traQ API." << std::endl;
         auto resp = drogon::HttpResponse::newHttpResponse();
@@ -32,24 +34,30 @@ drogon::Task<drogon::HttpResponsePtr> traQAPI::getFromTraQAPI(const std::string&
         req->setMethod(drogon::Get);
         req->setPath(endpoint);
         req->addHeader("Authorization", std::format("Bearer {}", Token));
+        for (const auto& [key, value] : params) {
+            req->setParameter(key, value);
+        }
         auto resp = co_await client->sendRequestCoro(req);
 
         if (resp->getStatusCode() != drogon::k200OK) {
-            std::cerr << "Error fetching stamps: " << resp->getBody() << std::endl;
+            std::cerr << std::format("traQ API error ({}): {}",
+                static_cast<int>(resp->getStatusCode()),
+                resp->getBody()) << std::endl;
             auto errorResp = drogon::HttpResponse::newHttpResponse();
-            errorResp->setStatusCode(drogon::k500InternalServerError);
+            errorResp->setStatusCode(resp->getStatusCode() >= 500
+                ? drogon::k502BadGateway : resp->getStatusCode());
             errorResp->setContentTypeCode(drogon::CT_TEXT_PLAIN);
-            errorResp->setBody(std::format("Error fetching stamps: {}", resp->getBody()));
+            errorResp->setBody("Failed to fetch data from traQ API");
             co_return errorResp;
         }
         co_return resp;
     }
     catch (const std::exception& e) {
-        std::cerr << "Error fetching stamps: " << e.what() << std::endl;
+        std::cerr << "Exception while calling traQ API: " << e.what() << std::endl;
         auto resp = drogon::HttpResponse::newHttpResponse();
-        resp->setStatusCode(drogon::k500InternalServerError);
+        resp->setStatusCode(drogon::k502BadGateway);
         resp->setContentTypeCode(drogon::CT_TEXT_PLAIN);
-        resp->setBody(std::string("Error fetching stamps: ") + e.what());
+        resp->setBody("Bad Gateway");
         co_return resp;
     }
 }
@@ -157,6 +165,30 @@ drogon::Task<std::expected<std::pair<std::string, std::string>, drogon::HttpResp
         }
     }
     co_return std::make_pair(std::move(imageData), std::move(contentType));
+}
+
+drogon::Task<drogon::HttpResponsePtr> traQAPI::getChannels(std::string query)
+{
+    // queryが安全か確認
+    if ([&query]() -> bool {
+        if (query.empty()) return false;
+        // 512文字以上のチャンネルは存在しないはず
+            if (query.size() > 512) return true;
+            return !std::ranges::none_of(query, [](unsigned char c) {
+                return std::iscntrl(c);
+                });
+        }()) {
+        auto badReq = drogon::HttpResponse::newHttpResponse();
+        badReq->setStatusCode(drogon::k400BadRequest);
+        badReq->setContentTypeCode(drogon::CT_TEXT_PLAIN);
+        badReq->setBody("Invalid query parameter");
+        co_return badReq;
+    }
+
+    co_return co_await getFromTraQAPI("/api/v3/channels", {
+        { "include-dm", "false" },
+        { "path", query }
+        });
 }
 
 void traQAPI::shutdown()
