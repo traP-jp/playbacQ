@@ -9,6 +9,7 @@
 #include <atomic>
 
 struct LiveVideo {
+	// YouTubeの動画ID
 	std::string videoId;
 	double delay;
 	std::optional<std::chrono::sys_time<std::chrono::milliseconds>> actualStartTime;
@@ -20,6 +21,8 @@ class BotPlugin : public drogon::Plugin<BotPlugin> {
 private:
 	// キーはチャンネルID
 	std::map<std::string, LiveVideo> liveVideos;
+	std::optional<std::chrono::sys_time<std::chrono::milliseconds>> iso8601ToSysTime(const std::string& iso8601);
+	std::string youtubeApiKey;
 public:
 	void initAndStart(const Json::Value& config) override;
 

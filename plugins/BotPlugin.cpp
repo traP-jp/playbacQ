@@ -6,10 +6,22 @@
 
 void BotPlugin::initAndStart(const Json::Value& config)
 {
-	// Initialize the plugin here
-	// You can access the configuration using the 'config' parameter
-	// For example, you can read a value like this:
-	// std::string someValue = config["someKey"].asString();
+	const char* apiKeyEnv = std::getenv("YOUTUBE_API_KEY");
+	if (apiKeyEnv == nullptr) {
+		std::cerr << "YOUTUBE_API_KEY is not set. BotPlugin will not be initialized." << std::endl;
+		return;
+	}
+	youtubeApiKey = std::string(apiKeyEnv);
+}
+
+std::optional<std::chrono::sys_time<std::chrono::milliseconds>> BotPlugin::iso8601ToSysTime(const std::string& iso8601) {
+	std::istringstream ss(iso8601);
+	std::chrono::sys_time<std::chrono::milliseconds> tp;
+	ss >> std::chrono::parse("%FT%T", tp);
+	if (ss.fail()) {
+		return std::nullopt;
+	}
+	return tp;
 }
 
 drogon::Task<void> BotPlugin::registerChannel(
@@ -28,6 +40,23 @@ drogon::Task<void> BotPlugin::registerChannel(
 		std::cerr << "Channel does not exist: " << channelId << std::endl;
 		co_return;
 	}
+	// チャンネルがすでに登録されている場合は前のライブが終了しているかを確認する
+	if (liveVideos.contains(channelId)) {
+		const std::string youtubeID = liveVideos[channelId].videoId;
+		auto videoInfoRaw = co_await YoutubeAPI::fetchLiveInfo(youtubeID, youtubeApiKey);
+		if (!videoInfoRaw) {
+			std::cerr << "Failed to fetch live info from YouTube API for channel: " << channelId << std::endl;
+			co_return;
+		}
+		const YoutubeAPI::LiveInfo& videoInfo = videoInfoRaw.value();
+		if (!videoInfo.actualEndTime.has_value()) {
+			std::cerr << "Channel already registered and live stream has not ended: " << channelId << std::endl;
+			co_return;
+		}
+		// ライブが終了している場合はクリーンアップ
+		liveVideos.erase(channelId);
+	}
+
 	liveVideos[channelId] = { videoId, delay };
 	co_return;
 }
@@ -54,10 +83,37 @@ drogon::Task<drogon::HttpResponsePtr> BotPlugin::postComment(
 		resp->setBody(badRequestMessage);
 		co_return resp;
 	}
-	if (!liveVideos[channelId.data()].actualStartTime.has_value()) {
-		// TODO: ライブ開始判定
-		// Youtube APIを叩く
+	// ライブ配信が始まったかどうか確認
+	const std::string youtubeID = liveVideos[channelId.data()].videoId;
+	auto videoInfoRaw = co_await YoutubeAPI::fetchLiveInfo(youtubeID, youtubeApiKey);
+	if (!videoInfoRaw) {
+		auto resp = drogon::HttpResponse::newHttpResponse();
+		resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+		resp->setBody("Failed to fetch live info from YouTube API");
+		co_return resp;
 	}
+	const YoutubeAPI::LiveInfo& videoInfo = videoInfoRaw.value();
+	// 配信が始まっていない場合は早期リターン
+	if (!videoInfo.actualStartTime.has_value()) {
+		auto resp = drogon::HttpResponse::newHttpResponse();
+		resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+		resp->setBody("Live stream has not started yet");
+		co_return resp;
+	}
+	// 配信が始まった場合はactualStartTimeを保存
+	if (!liveVideos[channelId.data()].actualStartTime.has_value())
+		liveVideos[channelId.data()].actualStartTime = iso8601ToSysTime(*videoInfo.actualStartTime);
+	// 配信が終了したかを確認
+	if (videoInfo.actualEndTime.has_value()) {
+		//クリーンアップ処理
+		liveVideos.erase(channelId.data());
+
+		auto resp = drogon::HttpResponse::newHttpResponse();
+		resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+		resp->setBody("Live stream has already ended");
+		co_return resp;
+	}
+
 	try {
 		drogon_model::playbacq::Comments newComment;
 		newComment.setVideoId(liveVideos[channelId.data()].videoId);
