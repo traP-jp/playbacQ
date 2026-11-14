@@ -22,6 +22,7 @@
 #include "../plugins/S3Plugin.h"
 #include "../plugins/Token.h"
 #include "../plugins/YoutubeAPI.h"
+#include "../plugins/BotPlugin.h"
 #include "Status.h"
 
 using namespace api;
@@ -52,7 +53,7 @@ namespace {
 		const Json::Value& body,
 		std::string& error
 	) {
-		if (!body.isObject() || !hasOnlyMembers(body, {"fields"})
+		if (!body.isObject() || !hasOnlyMembers(body, { "fields" })
 			|| !body.isMember("fields") || !body["fields"].isArray()
 			|| body["fields"].empty()) {
 			error = "Request body must contain only a non-empty 'fields' array";
@@ -379,19 +380,28 @@ drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
 		// 現時点ではYoutubeのみ対応
 		newVideo.setType(videoInfo.type.value_or("youtube"));
 		// titleが空ならデフォルト値を設定する。
-		if (!jsonPtr->isMember("title") || jsonPtr->get("title", "").asString().empty()) {
+		if (jsonPtr->get("title", "").asString().empty()) {
 			newVideo.setTitle(*videoInfo.title);
 		} else {
 			newVideo.setTitle(jsonPtr->get("title", "NULL").asString());
 		}
 		// descriptionが空ならデフォルト値を設定する。
-		if (!jsonPtr->isMember("description") || jsonPtr->get("description", "").asString().empty()) {
+		if (jsonPtr->get("description", "").asString().empty()) {
 			newVideo.setDescription(*videoInfo.description);
 		} else {
 			newVideo.setDescription(jsonPtr->get("description", "NULL").asString());
 		}
 		// 動画の長さをYoutubeから取得する。
 		newVideo.setDuration(videoInfo.duration.value_or(0));
+		// ライブ配信かつtraQチャンネルIDが設定されている場合は、BotPluginに登録する。
+		if (!jsonPtr->get("channel_id", "").asString().empty() &&
+			videoInfo.type && *videoInfo.type == "youtube live") {
+			std::string channelId = jsonPtr->get("channel_id", "").asString();
+			// デフォルトの遅延は15秒
+			double delay = jsonPtr->get("delay", 15.0).asDouble();
+			auto botPlugin = drogon::app().getPlugin<BotPlugin>();
+			botPlugin->registerChannel(channelId, youtubeID, delay);
+		}
 
 		newVideo.setUserId(req->getAttributes()->get<std::string>("userId"));
 		newVideo.setStatus((uint8_t)Status::completed);
@@ -429,18 +439,18 @@ drogon::Task<drogon::HttpResponsePtr> videos::refreshExVideoDuration(
 		}
 
 		auto durationResponse = [](const std::string& status,
-		const drogon_model::playbacq::Videos& currentVideo,
-		int quotaUnits,
-		const std::optional<std::string>& reason = std::nullopt) {
-			Json::Value body;
-			body["status"] = status;
-			body["quota_units"] = quotaUnits;
-			body["video"] = currentVideo.toJson();
-			if (reason) {
-				body["reason"] = *reason;
-			}
-			return drogon::HttpResponse::newHttpJsonResponse(body);
-		};
+			const drogon_model::playbacq::Videos& currentVideo,
+			int quotaUnits,
+			const std::optional<std::string>& reason = std::nullopt) {
+				Json::Value body;
+				body["status"] = status;
+				body["quota_units"] = quotaUnits;
+				body["video"] = currentVideo.toJson();
+				if (reason) {
+					body["reason"] = *reason;
+				}
+				return drogon::HttpResponse::newHttpJsonResponse(body);
+			};
 
 		if (video.getValueOfType() != "youtube live") {
 			co_return durationResponse("unchanged", video, 0, "not_live_video");

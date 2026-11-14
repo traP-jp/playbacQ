@@ -281,6 +281,13 @@
             "name": "traQAPI",
             "dependencies": [],
             "config": {}
+        },
+        {
+            "name": "BotPlugin",
+            "dependencies": [
+                "traQAPI"
+            ],
+            "config": {}
         }
     ],
     "custom_config": {

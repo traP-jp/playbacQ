@@ -19,19 +19,30 @@ drogon::Task<drogon::HttpResponsePtr> traQbot::asyncHandleHttpRequest(HttpReques
 		co_return resp;
 	}
 	auto eventType = req->getHeader("X-TRAQ-BOT-EVENT");
-	auto body = jsonPtr->toStyledString();
+	const auto body = req->getJsonObject();
 	if (eventType == "PING" || eventType == "JOINED" || eventType == "LEFT") {
 		auto resp = drogon::HttpResponse::newHttpResponse();
 		resp->setStatusCode(drogon::HttpStatusCode::k204NoContent);
 		co_return resp;
 	}
+	if (!body->isMember("message")) {
+		auto resp = drogon::HttpResponse::newHttpResponse();
+		resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+		resp->setBody("Missing 'message' field in request body");
+		co_return resp;
+	}
+	const auto message = (*body)["message"];
+	const std::string channelId = message.get("channel", "").asString();
+	const std::string content = message.get("plainText", "").asString();
+	const std::string messageId = message.get("id", "").asString();
 	auto* botPlugin = drogon::app().getPlugin<BotPlugin>();
 	if (eventType == "MESSAGE_CREATED") {
-		// TODO
+		const std::string createdAt = message.get("createdAt", "").asString();
+		co_return co_await botPlugin->postComment(channelId, content, createdAt, messageId);
 	} else if (eventType == "MESSAGE_UPDATED") {
-		// TODO
+		co_return co_await botPlugin->updateComment(channelId, content, messageId);
 	} else if (eventType == "MESSAGE_DELETED") {
-		// TODO
+		co_return co_await botPlugin->deleteComment(channelId, messageId);
 	}
 
 	auto resp = drogon::HttpResponse::newHttpResponse();

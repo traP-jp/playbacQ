@@ -139,6 +139,13 @@ paths:
                   type: string
                   description: "動画のリンク"
                   example: "https://youtu.be/fV04ZVNpfIk"
+                channelId:
+                  type: string
+                  description: "ライブ配信用traQチャンネルのID。動画がライブ配信かつこのパラメータが設定されている場合、自動的にtraQチャンネルと紐づけられます。"
+                  example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                delay:
+                  type: integer
+                  description: "ライブ配信のtraQチャンネルへのコメント反映の遅延時間(秒)。デフォルトは15秒です。"
       responses:
         "201":
           description: "動画が作成されました。"
@@ -1297,37 +1304,6 @@ paths:
                       example: "general"
                       pattern: "^[a-zA-Z0-9_-]{1,32}$"
                       description: "チャンネルの名前"
-        "403":
-          description: "アクセスが拒否されました。"
-        "500":
-          description: "サーバー内部エラー"
-  /api/traq/register-channel:
-    post:
-      summary: "ライブ配信用チャンネルの登録"
-      description: "動画とtraQチャンネルを紐づけます。"
-      operationId: registerBotChannel
-      x-tested: false
-      tags:
-        - Bot
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                video_id:
-                  type: string
-                  description: "動画のID"
-                channel_id:
-                  type: string
-                  format: uuid
-                  description: "traQチャンネルのUUID"
-      responses:
-        "200":
-          description: "チャンネルが正常に登録されました。"
-        "400":
-          description: "リクエストが不正です。"
         "403":
           description: "アクセスが拒否されました。"
         "500":

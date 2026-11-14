@@ -191,6 +191,12 @@ drogon::Task<drogon::HttpResponsePtr> traQAPI::getChannels(std::string query)
         });
 }
 
+drogon::Task<bool> traQAPI::channelExists(std::string_view channelId)
+{
+    auto resp = co_await getFromTraQAPI(std::format("/api/v3/channels/{}", channelId));
+    co_return resp->getStatusCode() == drogon::k200OK;
+}
+
 void traQAPI::shutdown()
 {
     /// Shutdown the plugin
