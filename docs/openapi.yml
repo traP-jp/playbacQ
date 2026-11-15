@@ -1211,7 +1211,7 @@ paths:
       summary: "スタンプリストの取得"
       description: "スタンプのリストを取得します。"
       operationId: getTraqStamps
-      x-tested: false
+      x-tested: true
       tags:
         - stamp
       responses:
@@ -1243,7 +1243,7 @@ paths:
       summary: "スタンプ画像を取得"
       description: "指定したIDのスタンプ画像を返します。"
       operationId: getTraqStampImage
-      x-tested: false
+      x-tested: true
       tags:
         - stamp
       parameters:

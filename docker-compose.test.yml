@@ -24,6 +24,8 @@ services:
       - YOUTUBE_API_BASE_URL=http://127.0.0.1:9999
       - TRAQ_TOKEN=${TRAQ_TOKEN:-test-token}
       - TRAQ_API_URL=http://127.0.0.1:9999
+      - TRAQ_BOT_ID=${TRAQ_BOT_ID:-test-bot-id}
+      - TRAQ_BOT_TOKEN=${TRAQ_BOT_TOKEN:-test-bot-token}
     depends_on:
       test-db:
         condition: service_healthy

@@ -110,54 +110,55 @@ int main(int argc, char** argv)
             },
             { drogon::Get });
 
+        // traQ API スタンプ一覧モック: GET /api/v3/stamps
+        drogon::app().registerHandler(
+            "/api/v3/stamps",
+            [](const drogon::HttpRequestPtr& req,
+                std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+                    Json::Value body(Json::arrayValue);
+                    Json::Value stamp1;
+                    stamp1["id"] = "stamp-id-001";
+                    stamp1["name"] = "sample_stamp_1";
+                    stamp1["creatorId"] = "user-id-001";
+                    body.append(stamp1);
+
+                    Json::Value stamp2;
+                    stamp2["id"] = "stamp-id-002";
+                    stamp2["name"] = "sample_stamp_2";
+                    stamp2["creatorId"] = "user-id-002";
+                    body.append(stamp2);
+
+                    callback(drogon::HttpResponse::newHttpJsonResponse(body));
+            },
+            { drogon::Get });
+
+        // traQ API スタンプ画像取得モック: GET /api/v3/stamps/{id}/image
+        drogon::app().registerHandler(
+            "/api/v3/stamps/{stampId}/image",
+            [](const drogon::HttpRequestPtr& req,
+                std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                const std::string& stampId) {
+                    if (stampId == "not-found-stamp") {
+                        auto resp = drogon::HttpResponse::newHttpResponse();
+                        resp->setStatusCode(drogon::k404NotFound);
+                        resp->setBody("Stamp not found");
+                        callback(resp);
+                        return;
+                    }
+
+                    auto resp = drogon::HttpResponse::newHttpResponse();
+                    resp->setStatusCode(drogon::k200OK);
+                    resp->setContentTypeCode(drogon::CT_CUSTOM);
+                    resp->setContentTypeString("image/png");
+                    resp->setBody("DUMMY_PNG_DATA_FOR_" + stampId);
+                    callback(resp);
+            },
+            { drogon::Get });
+
         app().loadConfigFile("config.test.json");
         app().getLoop()->queueInLoop([&p1]() { p1.set_value(); });
         app().run();
         });
-    // traQ API スタンプ一覧モック: GET /api/v3/stamps
-    drogon::app().registerHandler(
-        "/api/v3/stamps",
-        [](const drogon::HttpRequestPtr& req,
-            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-                Json::Value body(Json::arrayValue);
-                Json::Value stamp1;
-                stamp1["id"] = "stamp-id-001";
-                stamp1["name"] = "sample_stamp_1";
-                stamp1["creatorId"] = "user-id-001";
-                body.append(stamp1);
-
-                Json::Value stamp2;
-                stamp2["id"] = "stamp-id-002";
-                stamp2["name"] = "sample_stamp_2";
-                stamp2["creatorId"] = "user-id-002";
-                body.append(stamp2);
-
-                callback(drogon::HttpResponse::newHttpJsonResponse(body));
-        },
-        { drogon::Get });
-
-    // traQ API スタンプ画像取得モック: GET /api/v3/stamps/{id}/image
-    drogon::app().registerHandler(
-        "/api/v3/stamps/{stampId}/image",
-        [](const drogon::HttpRequestPtr& req,
-            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
-            const std::string& stampId) {
-                if (stampId == "not-found-stamp") {
-                    auto resp = drogon::HttpResponse::newHttpResponse();
-                    resp->setStatusCode(drogon::k404NotFound);
-                    resp->setBody("Stamp not found");
-                    callback(resp);
-                    return;
-                }
-
-                auto resp = drogon::HttpResponse::newHttpResponse();
-                resp->setStatusCode(drogon::k200OK);
-                resp->setContentTypeCode(drogon::CT_CUSTOM);
-                resp->setContentTypeString("image/png");
-                resp->setBody("DUMMY_PNG_DATA_FOR_" + stampId);
-                callback(resp);
-        },
-        { drogon::Get });
 
     // The future is only satisfied after the event loop started
     f1.get();
