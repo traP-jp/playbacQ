@@ -40,12 +40,10 @@ public:
 		std::string_view messageId
 	);
 	drogon::Task<drogon::HttpResponsePtr> updateComment(
-		std::string_view channelId,
 		std::string_view comment,
 		std::string_view messageId
 	);
 	drogon::Task<drogon::HttpResponsePtr> deleteComment(
-		std::string_view channelId,
 		std::string_view messageId
 	);
 

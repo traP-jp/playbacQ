@@ -32,17 +32,17 @@ drogon::Task<drogon::HttpResponsePtr> traQbot::asyncHandleHttpRequest(HttpReques
 		co_return resp;
 	}
 	const auto message = (*body)["message"];
-	const std::string channelId = message.get("channel", "").asString();
 	const std::string content = message.get("plainText", "").asString();
 	const std::string messageId = message.get("id", "").asString();
 	auto* botPlugin = drogon::app().getPlugin<BotPlugin>();
 	if (eventType == "MESSAGE_CREATED") {
+		const std::string channelId = message.get("channel", "").asString();
 		const std::string createdAt = message.get("createdAt", "").asString();
 		co_return co_await botPlugin->postComment(channelId, content, createdAt, messageId);
 	} else if (eventType == "MESSAGE_UPDATED") {
-		co_return co_await botPlugin->updateComment(channelId, content, messageId);
+		co_return co_await botPlugin->updateComment(content, messageId);
 	} else if (eventType == "MESSAGE_DELETED") {
-		co_return co_await botPlugin->deleteComment(channelId, messageId);
+		co_return co_await botPlugin->deleteComment(messageId);
 	}
 
 	auto resp = drogon::HttpResponse::newHttpResponse();

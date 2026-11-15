@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS comments (
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	command TEXT,
 	status TINYINT UNSIGNED NOT NULL DEFAULT 0,
+	traq_message_id VARCHAR(255) UNIQUE DEFAULT NULL,
 	FOREIGN KEY (video_id) REFERENCES videos(video_id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS tags (
@@ -52,5 +53,13 @@ CREATE TABLE IF NOT EXISTS video_likes (
 	user_id VARCHAR(32),
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	PRIMARY KEY (video_id, user_id),
+	FOREIGN KEY (video_id) REFERENCES videos(video_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS live_videos (
+	video_id VARCHAR(255),
+	channel_id VARCHAR(255),
+	delay DOUBLE NOT NULL,
+	actual_start_time DATETIME(3) DEFAULT NULL,
+	PRIMARY KEY (video_id, channel_id),
 	FOREIGN KEY (video_id) REFERENCES videos(video_id) ON DELETE CASCADE
 );

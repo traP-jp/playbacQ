@@ -21,6 +21,7 @@ const std::string Comments::Cols::_timestamp = "timestamp";
 const std::string Comments::Cols::_created_at = "created_at";
 const std::string Comments::Cols::_command = "command";
 const std::string Comments::Cols::_status = "status";
+const std::string Comments::Cols::_traq_message_id = "traq_message_id";
 const std::string Comments::primaryKeyName = "comment_id";
 const bool Comments::hasPrimaryKey = true;
 const std::string Comments::tableName = "comments";
@@ -33,7 +34,8 @@ const std::vector<typename Comments::MetaData> Comments::metaData_={
 {"timestamp","double","double",8,0,0,1},
 {"created_at","::trantor::Date","timestamp",0,0,0,0},
 {"command","std::string","text",0,0,0,0},
-{"status","uint8_t","tinyint unsigned",1,0,0,1}
+{"status","uint8_t","tinyint unsigned",1,0,0,1},
+{"traq_message_id","std::string","varchar(255)",255,0,0,0}
 };
 const std::string &Comments::getColumnName(size_t index) noexcept(false)
 {
@@ -94,11 +96,15 @@ Comments::Comments(const Row &r, const ssize_t indexOffset) noexcept
         {
             status_=std::make_shared<uint8_t>(r["status"].as<uint8_t>());
         }
+        if(!r["traq_message_id"].isNull())
+        {
+            traqMessageId_=std::make_shared<std::string>(r["traq_message_id"].as<std::string>());
+        }
     }
     else
     {
         size_t offset = (size_t)indexOffset;
-        if(offset + 8 > r.size())
+        if(offset + 9 > r.size())
         {
             LOG_FATAL << "Invalid SQL result for this model";
             return;
@@ -162,13 +168,18 @@ Comments::Comments(const Row &r, const ssize_t indexOffset) noexcept
         {
             status_=std::make_shared<uint8_t>(r[index].as<uint8_t>());
         }
+        index = offset + 8;
+        if(!r[index].isNull())
+        {
+            traqMessageId_=std::make_shared<std::string>(r[index].as<std::string>());
+        }
     }
 
 }
 
 Comments::Comments(const Json::Value &pJson, const std::vector<std::string> &pMasqueradingVector) noexcept(false)
 {
-    if(pMasqueradingVector.size() != 8)
+    if(pMasqueradingVector.size() != 9)
     {
         LOG_ERROR << "Bad masquerading vector";
         return;
@@ -253,6 +264,14 @@ Comments::Comments(const Json::Value &pJson, const std::vector<std::string> &pMa
         if(!pJson[pMasqueradingVector[7]].isNull())
         {
             status_=std::make_shared<uint8_t>((uint8_t)pJson[pMasqueradingVector[7]].asUInt64());
+        }
+    }
+    if(!pMasqueradingVector[8].empty() && pJson.isMember(pMasqueradingVector[8]))
+    {
+        dirtyFlag_[8] = true;
+        if(!pJson[pMasqueradingVector[8]].isNull())
+        {
+            traqMessageId_=std::make_shared<std::string>(pJson[pMasqueradingVector[8]].asString());
         }
     }
 }
@@ -341,12 +360,20 @@ Comments::Comments(const Json::Value &pJson) noexcept(false)
             status_=std::make_shared<uint8_t>((uint8_t)pJson["status"].asUInt64());
         }
     }
+    if(pJson.isMember("traq_message_id"))
+    {
+        dirtyFlag_[8]=true;
+        if(!pJson["traq_message_id"].isNull())
+        {
+            traqMessageId_=std::make_shared<std::string>(pJson["traq_message_id"].asString());
+        }
+    }
 }
 
 void Comments::updateByMasqueradedJson(const Json::Value &pJson,
                                             const std::vector<std::string> &pMasqueradingVector) noexcept(false)
 {
-    if(pMasqueradingVector.size() != 8)
+    if(pMasqueradingVector.size() != 9)
     {
         LOG_ERROR << "Bad masquerading vector";
         return;
@@ -432,6 +459,14 @@ void Comments::updateByMasqueradedJson(const Json::Value &pJson,
             status_=std::make_shared<uint8_t>((uint8_t)pJson[pMasqueradingVector[7]].asUInt64());
         }
     }
+    if(!pMasqueradingVector[8].empty() && pJson.isMember(pMasqueradingVector[8]))
+    {
+        dirtyFlag_[8] = true;
+        if(!pJson[pMasqueradingVector[8]].isNull())
+        {
+            traqMessageId_=std::make_shared<std::string>(pJson[pMasqueradingVector[8]].asString());
+        }
+    }
 }
 
 void Comments::updateByJson(const Json::Value &pJson) noexcept(false)
@@ -515,6 +550,14 @@ void Comments::updateByJson(const Json::Value &pJson) noexcept(false)
         if(!pJson["status"].isNull())
         {
             status_=std::make_shared<uint8_t>((uint8_t)pJson["status"].asUInt64());
+        }
+    }
+    if(pJson.isMember("traq_message_id"))
+    {
+        dirtyFlag_[8] = true;
+        if(!pJson["traq_message_id"].isNull())
+        {
+            traqMessageId_=std::make_shared<std::string>(pJson["traq_message_id"].asString());
         }
     }
 }
@@ -700,6 +743,33 @@ void Comments::setStatus(const uint8_t &pStatus) noexcept
     dirtyFlag_[7] = true;
 }
 
+const std::string &Comments::getValueOfTraqMessageId() const noexcept
+{
+    static const std::string defaultValue = std::string();
+    if(traqMessageId_)
+        return *traqMessageId_;
+    return defaultValue;
+}
+const std::shared_ptr<std::string> &Comments::getTraqMessageId() const noexcept
+{
+    return traqMessageId_;
+}
+void Comments::setTraqMessageId(const std::string &pTraqMessageId) noexcept
+{
+    traqMessageId_ = std::make_shared<std::string>(pTraqMessageId);
+    dirtyFlag_[8] = true;
+}
+void Comments::setTraqMessageId(std::string &&pTraqMessageId) noexcept
+{
+    traqMessageId_ = std::make_shared<std::string>(std::move(pTraqMessageId));
+    dirtyFlag_[8] = true;
+}
+void Comments::setTraqMessageIdToNull() noexcept
+{
+    traqMessageId_.reset();
+    dirtyFlag_[8] = true;
+}
+
 void Comments::updateId(const uint64_t id)
 {
     commentId_ = std::make_shared<int32_t>(static_cast<int32_t>(id));
@@ -714,7 +784,8 @@ const std::vector<std::string> &Comments::insertColumns() noexcept
         "timestamp",
         "created_at",
         "command",
-        "status"
+        "status",
+        "traq_message_id"
     };
     return inCols;
 }
@@ -798,6 +869,17 @@ void Comments::outputArgs(drogon::orm::internal::SqlBinder &binder) const
             binder << nullptr;
         }
     }
+    if(dirtyFlag_[8])
+    {
+        if(getTraqMessageId())
+        {
+            binder << getValueOfTraqMessageId();
+        }
+        else
+        {
+            binder << nullptr;
+        }
+    }
 }
 
 const std::vector<std::string> Comments::updateColumns() const
@@ -830,6 +912,10 @@ const std::vector<std::string> Comments::updateColumns() const
     if(dirtyFlag_[7])
     {
         ret.push_back(getColumnName(7));
+    }
+    if(dirtyFlag_[8])
+    {
+        ret.push_back(getColumnName(8));
     }
     return ret;
 }
@@ -913,6 +999,17 @@ void Comments::updateArgs(drogon::orm::internal::SqlBinder &binder) const
             binder << nullptr;
         }
     }
+    if(dirtyFlag_[8])
+    {
+        if(getTraqMessageId())
+        {
+            binder << getValueOfTraqMessageId();
+        }
+        else
+        {
+            binder << nullptr;
+        }
+    }
 }
 Json::Value Comments::toJson() const
 {
@@ -981,6 +1078,14 @@ Json::Value Comments::toJson() const
     {
         ret["status"]=Json::Value();
     }
+    if(getTraqMessageId())
+    {
+        ret["traq_message_id"]=getValueOfTraqMessageId();
+    }
+    else
+    {
+        ret["traq_message_id"]=Json::Value();
+    }
     return ret;
 }
 
@@ -993,7 +1098,7 @@ Json::Value Comments::toMasqueradedJson(
     const std::vector<std::string> &pMasqueradingVector) const
 {
     Json::Value ret;
-    if(pMasqueradingVector.size() == 8)
+    if(pMasqueradingVector.size() == 9)
     {
         if(!pMasqueradingVector[0].empty())
         {
@@ -1083,6 +1188,17 @@ Json::Value Comments::toMasqueradedJson(
                 ret[pMasqueradingVector[7]]=Json::Value();
             }
         }
+        if(!pMasqueradingVector[8].empty())
+        {
+            if(getTraqMessageId())
+            {
+                ret[pMasqueradingVector[8]]=getValueOfTraqMessageId();
+            }
+            else
+            {
+                ret[pMasqueradingVector[8]]=Json::Value();
+            }
+        }
         return ret;
     }
     LOG_ERROR << "Masquerade failed";
@@ -1150,6 +1266,14 @@ Json::Value Comments::toMasqueradedJson(
     {
         ret["status"]=Json::Value();
     }
+    if(getTraqMessageId())
+    {
+        ret["traq_message_id"]=getValueOfTraqMessageId();
+    }
+    else
+    {
+        ret["traq_message_id"]=Json::Value();
+    }
     return ret;
 }
 
@@ -1205,13 +1329,18 @@ bool Comments::validateJsonForCreation(const Json::Value &pJson, std::string &er
         if(!validJsonOfField(7, "status", pJson["status"], err, true))
             return false;
     }
+    if(pJson.isMember("traq_message_id"))
+    {
+        if(!validJsonOfField(8, "traq_message_id", pJson["traq_message_id"], err, true))
+            return false;
+    }
     return true;
 }
 bool Comments::validateMasqueradedJsonForCreation(const Json::Value &pJson,
                                                   const std::vector<std::string> &pMasqueradingVector,
                                                   std::string &err)
 {
-    if(pMasqueradingVector.size() != 8)
+    if(pMasqueradingVector.size() != 9)
     {
         err = "Bad masquerading vector";
         return false;
@@ -1291,6 +1420,14 @@ bool Comments::validateMasqueradedJsonForCreation(const Json::Value &pJson,
                   return false;
           }
       }
+      if(!pMasqueradingVector[8].empty())
+      {
+          if(pJson.isMember(pMasqueradingVector[8]))
+          {
+              if(!validJsonOfField(8, pMasqueradingVector[8], pJson[pMasqueradingVector[8]], err, true))
+                  return false;
+          }
+      }
     }
     catch(const Json::LogicError &e)
     {
@@ -1346,13 +1483,18 @@ bool Comments::validateJsonForUpdate(const Json::Value &pJson, std::string &err)
         if(!validJsonOfField(7, "status", pJson["status"], err, false))
             return false;
     }
+    if(pJson.isMember("traq_message_id"))
+    {
+        if(!validJsonOfField(8, "traq_message_id", pJson["traq_message_id"], err, false))
+            return false;
+    }
     return true;
 }
 bool Comments::validateMasqueradedJsonForUpdate(const Json::Value &pJson,
                                                 const std::vector<std::string> &pMasqueradingVector,
                                                 std::string &err)
 {
-    if(pMasqueradingVector.size() != 8)
+    if(pMasqueradingVector.size() != 9)
     {
         err = "Bad masquerading vector";
         return false;
@@ -1401,6 +1543,11 @@ bool Comments::validateMasqueradedJsonForUpdate(const Json::Value &pJson,
       if(!pMasqueradingVector[7].empty() && pJson.isMember(pMasqueradingVector[7]))
       {
           if(!validJsonOfField(7, pMasqueradingVector[7], pJson[pMasqueradingVector[7]], err, false))
+              return false;
+      }
+      if(!pMasqueradingVector[8].empty() && pJson.isMember(pMasqueradingVector[8]))
+      {
+          if(!validJsonOfField(8, pMasqueradingVector[8], pJson[pMasqueradingVector[8]], err, false))
               return false;
       }
     }
@@ -1529,6 +1676,25 @@ bool Comments::validJsonOfField(size_t index,
             if(!pJson.isUInt())
             {
                 err="Type error in the "+fieldName+" field";
+                return false;
+            }
+            break;
+        case 8:
+            if(pJson.isNull())
+            {
+                return true;
+            }
+            if(!pJson.isString())
+            {
+                err="Type error in the "+fieldName+" field";
+                return false;
+            }
+            if(pJson.isString() && std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t>{}
+                .from_bytes(pJson.asCString()).size() > 255)
+            {
+                err="String length exceeds limit for the " +
+                    fieldName +
+                    " field (the maximum value is 255)";
                 return false;
             }
             break;

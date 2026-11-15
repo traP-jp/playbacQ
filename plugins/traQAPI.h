@@ -3,6 +3,7 @@
 #include <drogon/plugins/Plugin.h>
 #include <drogon/HttpController.h>
 #include <drogon/HttpClient.h>
+#include <json/json.h>
 #include <expected>
 #include <shared_mutex>
 #include <chrono>
