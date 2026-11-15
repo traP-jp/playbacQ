@@ -68,7 +68,7 @@ docker compose exec backend bash
 コンテナ内で実行
 
 ```bash
-cmake -S . -B build -DBUILD_LOCAL_DEV=ON -DUSE_LOCAL_WORKER=ON
+cmake -S . -B build -DBUILD_LOCAL_DEV=ON -DUSE_LOCAL_WORKER=ON -DBUILD_TESTING=ON
 cmake --build build -j$(nproc)
 ./build/playbacq
 ```

@@ -245,17 +245,17 @@ DROGON_TEST(EditVideoMassAssignmentTest)
 	const Json::Value beforeJson = *beforeJsonPtr;
 
 	const std::vector<std::pair<std::string, Json::Value>> protectedFields = {
-		{"video_id", "attacker-video"},
-		{"user_id", "otheruser"},
-		{"thumbnail_url", "https://example.com/example.png"},
-		{"video_url", "https://example.com/watch/attacker-video"},
-		{"created_at", "2008-04-23 00:31:07"},
-		{"view_count", 999999999},
-		{"duration", 8},
-		{"like_count", 999999999},
-		{"status", 2},
-		{"is_external", 1},
-		{"type", "youtube"},
+		{ "video_id", "attacker-video" },
+		{ "user_id", "otheruser" },
+		{ "thumbnail_url", "https://example.com/example.png" },
+		{ "video_url", "https://example.com/watch/attacker-video" },
+		{ "created_at", "2008-04-23 00:31:07" },
+		{ "view_count", 999999999 },
+		{ "duration", 8 },
+		{ "like_count", 999999999 },
+		{ "status", 2 },
+		{ "is_external", 1 },
+		{ "type", "youtube" },
 	};
 
 	for (const auto& [field, value] : protectedFields) {
@@ -708,9 +708,9 @@ DROGON_TEST(SearchTest)
 	std::string videoId5 = videoId5Opt.value();
 	// 投稿された動画の中から検索
 	std::unordered_map<std::string, std::string> queries = {
-		{"search", "動画"},
-		{"sortby", "title"},
-		{"order", "1"}
+		{ "search", "動画" },
+		{ "sortby", "title" },
+		{ "order", "1" }
 	};
 	auto searchResp = sendSyncRequest(drogon::Get, "/api/videos", Json::Value::null, queries);
 	REQUIRE(searchResp != nullptr);
@@ -725,9 +725,9 @@ DROGON_TEST(SearchTest)
 	CHECK((*searchJson)[3]["video_id"].asString() == videoId4);
 	// 検索その2
 	queries = {
-		{"search", "em"},
-		{"sortby", "title"},
-		{"order", "0"}
+		{ "search", "em" },
+		{ "sortby", "title" },
+		{ "order", "0" }
 	};
 	searchResp = sendSyncRequest(drogon::Get, "/api/videos", Json::Value::null, queries);
 	REQUIRE(searchResp != nullptr);
@@ -752,10 +752,10 @@ DROGON_TEST(SearchTest)
 	CHECK(tagResp->getStatusCode() == drogon::k200OK);
 	// タグ検索
 	queries = {
-		{"search", "ー"},
-		{"tag", "かわいい"},
-		{"sortby", "title"},
-		{"order", "1"}
+		{ "search", "ー" },
+		{ "tag", "かわいい" },
+		{ "sortby", "title" },
+		{ "order", "1" }
 	};
 	searchResp = sendSyncRequest(drogon::Get, "/api/videos", Json::Value::null, queries);
 	REQUIRE(searchResp != nullptr);
@@ -776,10 +776,10 @@ DROGON_TEST(SearchTest)
 	CHECK(tagResp->getStatusCode() == drogon::k200OK);
 	// タグ検索2
 	queries = {
-		{"search", ""},
-		{"tag", "人類には早すぎる動画"},
-		{"sortby", "title"},
-		{"order", "1"}
+		{ "search", "" },
+		{ "tag", "人類には早すぎる動画" },
+		{ "sortby", "title" },
+		{ "order", "1" }
 	};
 	searchResp = sendSyncRequest(drogon::Get, "/api/videos", Json::Value::null, queries);
 	REQUIRE(searchResp != nullptr);
@@ -821,7 +821,7 @@ DROGON_TEST(SearchTest)
 	CHECK(deleteVideo(videoId5) == true);
 	// タグのクリーンアップ
 	std::unordered_map<std::string, std::string> CleanupQueries = {
-	{"query", "%"},
+	{ "query", "%" },
 	};
 	auto allTagsResp = sendSyncRequest(drogon::Get, "/api/tag", Json::Value::null, CleanupQueries);
 	REQUIRE(allTagsResp != nullptr);
@@ -884,7 +884,8 @@ DROGON_TEST(ProgressTest)
 			"VALUES (?, 'test_user', 'https://example.com/video.mp4', '進捗テスト', 1)",
 			videoId
 		);
-	} catch (const drogon::orm::DrogonDbException& e) {
+	}
+	catch (const drogon::orm::DrogonDbException& e) {
 		std::cerr << "DB Error: " << e.base().what() << std::endl;
 	}
 
@@ -916,7 +917,8 @@ DROGON_TEST(ProgressTest)
 	// クリーンアップ
 	try {
 		dbClient->execSqlSync("DELETE FROM videos WHERE video_id = ?", videoId);
-	} catch (const drogon::orm::DrogonDbException& e) {
+	}
+	catch (const drogon::orm::DrogonDbException& e) {
 		std::cerr << "DB Cleanup Error: " << e.base().what() << std::endl;
 	}
 }
@@ -1083,7 +1085,7 @@ DROGON_TEST(TagTest)
 	}
 	// タグ検索
 	std::unordered_map<std::string, std::string> queries = {
-		{"query", "す"},
+		{ "query", "す" },
 	};
 	auto searchResp = sendSyncRequest(drogon::Get, "/api/tag", Json::Value::null, queries);
 	REQUIRE(searchResp != nullptr);
@@ -1149,7 +1151,7 @@ DROGON_TEST(TagTest)
 	CHECK(deleteVideo(videoId2) == true);
 	// タグのクリーンアップ
 	std::unordered_map<std::string, std::string> CleanupQueries = {
-	{"query", "%"},
+	{ "query", "%" },
 	};
 	auto allTagsResp = sendSyncRequest(drogon::Get, "/api/tag", Json::Value::null, CleanupQueries);
 	REQUIRE(allTagsResp != nullptr);
@@ -1238,7 +1240,7 @@ DROGON_TEST(AuthRedirectTest)
 				drogon::Get,
 				"/api/auth/login",
 				Json::Value::null,
-				{ {"redirect", redirect} }
+				{ { "redirect", redirect } }
 			);
 			REQUIRE(validResp != nullptr);
 			CHECK(validResp->getStatusCode() == drogon::k302Found);
@@ -1250,7 +1252,7 @@ DROGON_TEST(AuthRedirectTest)
 		drogon::Get,
 		"/api/auth/login",
 		Json::Value::null,
-		{ {"redirect", frontendOrigin} }
+		{ { "redirect", frontendOrigin } }
 	);
 	REQUIRE(originOnlyResp != nullptr);
 	CHECK(originOnlyResp->getStatusCode() == drogon::k302Found);
@@ -1276,7 +1278,7 @@ DROGON_TEST(AuthRedirectTest)
 			drogon::Get,
 			"/api/auth/login",
 			Json::Value::null,
-			{ {"redirect", unsafeRedirect} }
+			{ { "redirect", unsafeRedirect } }
 		);
 		REQUIRE(unsafeResp != nullptr);
 		CHECK(unsafeResp->getStatusCode() == drogon::k302Found);
