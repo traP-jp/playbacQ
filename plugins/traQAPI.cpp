@@ -10,8 +10,11 @@ void traQAPI::initAndStart(const Json::Value& config)
     if (const char* apiUrl = std::getenv("TRAQ_API_URL"); apiUrl != nullptr) {
         ApiUrl = apiUrl;
     }
-    if (Token.empty() || ApiUrl.empty()) {
-        std::cerr << "TRAQ_TOKEN or TRAQ_API_URL is not set. traQAPI plugin will not be initialized." << std::endl;
+    if (const char* botId = std::getenv("TRAQ_BOT_ID"); botId != nullptr) {
+        BotId = botId;
+    }
+    if (Token.empty() || ApiUrl.empty() || BotId.empty()) {
+        std::cerr << "TRAQ_TOKEN or TRAQ_API_URL or TRAQ_BOT_ID is not set. traQAPI plugin will not be initialized." << std::endl;
         return;
     }
     client = drogon::HttpClient::newHttpClient(ApiUrl);
@@ -195,6 +198,27 @@ drogon::Task<bool> traQAPI::channelExists(std::string_view channelId)
 {
     auto resp = co_await getFromTraQAPI(std::format("/api/v3/channels/{}", channelId));
     co_return resp->getStatusCode() == drogon::k200OK;
+}
+
+drogon::Task<void> traQAPI::joinChannel(std::string_view channelId)
+{
+
+    auto resp = co_await getFromTraQAPI(std::format("/api/v3/bots/{}/actions/join", BotId), {
+        { "channelId", channelId.data() }
+        });
+    if (resp->getStatusCode() != drogon::k200OK)
+        throw std::runtime_error(std::format("Failed to join channel: {}. Error: {}", channelId, resp->getBody()));
+    co_return;
+}
+
+drogon::Task<void> traQAPI::leaveChannel(std::string_view channelId)
+{
+    auto resp = co_await getFromTraQAPI(std::format("/api/v3/bots/{}/actions/leave", BotId), {
+        { "channelId", channelId.data() }
+        });
+    if (resp->getStatusCode() != drogon::k200OK)
+        throw std::runtime_error(std::format("Failed to leave channel: {}. Error: {}", channelId, resp->getBody()));
+    co_return;
 }
 
 void traQAPI::shutdown()

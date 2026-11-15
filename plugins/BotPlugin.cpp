@@ -55,6 +55,15 @@ drogon::Task<void> BotPlugin::registerChannel(
 		}
 		// ライブが終了している場合はクリーンアップ
 		liveVideos.erase(channelId);
+	} else {
+		// チャンネルに参加する
+		try {
+			co_await traqAPI->joinChannel(channelId);
+		}
+		catch (const std::exception& e) {
+			std::cerr << "Failed to join channel: " << channelId << ". Error: " << e.what() << std::endl;
+			co_return;
+		}
 	}
 
 	liveVideos[channelId] = { videoId, delay };
@@ -83,34 +92,68 @@ drogon::Task<drogon::HttpResponsePtr> BotPlugin::postComment(
 		resp->setBody(badRequestMessage);
 		co_return resp;
 	}
-	// ライブ配信が始まったかどうか確認
 	const std::string youtubeID = liveVideos[channelId.data()].videoId;
-	auto videoInfoRaw = co_await YoutubeAPI::fetchLiveInfo(youtubeID, youtubeApiKey);
-	if (!videoInfoRaw) {
-		auto resp = drogon::HttpResponse::newHttpResponse();
-		resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
-		resp->setBody("Failed to fetch live info from YouTube API");
-		co_return resp;
+	if (!liveVideos[channelId.data()].actualStartTime.has_value()) {
+		// ライブ配信が始まったかどうか確認
+		auto videoInfoRaw = co_await YoutubeAPI::fetchLiveInfo(youtubeID, youtubeApiKey);
+		if (!videoInfoRaw) {
+			auto resp = drogon::HttpResponse::newHttpResponse();
+			resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+			resp->setBody("Failed to fetch live info from YouTube API");
+			co_return resp;
+		}
+		const YoutubeAPI::LiveInfo& videoInfo = videoInfoRaw.value();
+		// 配信が始まっていない場合は早期リターン
+		if (!videoInfo.actualStartTime.has_value()) {
+			auto resp = drogon::HttpResponse::newHttpResponse();
+			resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+			resp->setBody("Live stream has not started yet");
+			co_return resp;
+		}
+		// 配信が始まった場合はactualStartTimeを保存
+		if (!liveVideos[channelId.data()].actualStartTime.has_value())
+			liveVideos[channelId.data()].actualStartTime = iso8601ToSysTime(*videoInfo.actualStartTime);
 	}
-	const YoutubeAPI::LiveInfo& videoInfo = videoInfoRaw.value();
-	// 配信が始まっていない場合は早期リターン
-	if (!videoInfo.actualStartTime.has_value()) {
-		auto resp = drogon::HttpResponse::newHttpResponse();
-		resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
-		resp->setBody("Live stream has not started yet");
-		co_return resp;
-	}
-	// 配信が始まった場合はactualStartTimeを保存
-	if (!liveVideos[channelId.data()].actualStartTime.has_value())
-		liveVideos[channelId.data()].actualStartTime = iso8601ToSysTime(*videoInfo.actualStartTime);
 	// 配信が終了したかを確認
-	if (videoInfo.actualEndTime.has_value()) {
-		//クリーンアップ処理
-		liveVideos.erase(channelId.data());
+	{
+		auto* loop = drogon::app().getLoop();
+		std::lock_guard<std::mutex> lockGuard(mutex_);
+		// タイマーをリセット
+		if (check_timers_.contains(channelId.data()))
+			loop->invalidateTimer(check_timers_[channelId.data()]);
+		// 1分後に終了確認するタイマーをセット
+		trantor::TimerId timer_id = loop->runAfter(60.0, [this, channelId = std::string(channelId), youtubeID]() {
+			drogon::async_run([this, channelId, youtubeID]() -> drogon::Task<void> {
+				auto videoInfoRaw = co_await YoutubeAPI::fetchLiveInfo(youtubeID, youtubeApiKey);
+				if (videoInfoRaw && videoInfoRaw->actualEndTime.has_value()) {
+					// ライブが終了している場合はクリーンアップ
+					std::lock_guard<std::mutex> lockGuard(mutex_);
+					liveVideos.erase(channelId);
+					check_timers_.erase(channelId);
+					// チャンネルから退出する
+					auto* traqAPI = drogon::app().getPlugin<traQAPI>();
+					if (traqAPI) {
+						try {
+							co_await traqAPI->leaveChannel(channelId);
+						}
+						catch (const std::exception& e) {
+							std::cerr << "Failed to leave channel: " << channelId << ". Error: " << e.what() << std::endl;
+						}
+					} else {
+						std::cerr << "traQAPI plugin is not initialized" << std::endl;
+					}
+				}
+				co_return;
+				});
+			});
+		check_timers_[channelId.data()] = timer_id;
+	}
 
+	auto msgTime = iso8601ToSysTime(createdAt.data());
+	if (!msgTime.has_value()) {
 		auto resp = drogon::HttpResponse::newHttpResponse();
 		resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
-		resp->setBody("Live stream has already ended");
+		resp->setBody("Invalid CreatedAt format");
 		co_return resp;
 	}
 
@@ -120,7 +163,9 @@ drogon::Task<drogon::HttpResponsePtr> BotPlugin::postComment(
 		newComment.setComment(comment.data());
 		newComment.setUserId("playbacQ Bot");
 		newComment.setCreatedAt(trantor::Date::now());
-		// TODO: timestampの計算！
+		auto playTime = msgTime.value() - liveVideos[channelId.data()].actualStartTime.value();
+		double timestamp = std::chrono::duration<double>(playTime).count() / 1000.0 + liveVideos[channelId.data()].delay;
+		newComment.setTimestamp(timestamp);
 		newComment.setCommand("");
 
 		drogon::orm::CoroMapper<drogon_model::playbacq::Comments> mapper(drogon::app().getDbClient());

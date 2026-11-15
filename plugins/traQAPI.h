@@ -34,6 +34,7 @@ private:
 
   std::string Token;
   std::string ApiUrl;
+  std::string BotId;
   drogon::HttpClientPtr client;
   std::shared_mutex mutex;
   allStampsCacheEntry allStampsCache;
@@ -54,6 +55,8 @@ public:
   drogon::Task<std::expected<std::pair<std::string, std::string>, drogon::HttpResponsePtr>> getStampImage(std::string id);
   drogon::Task<drogon::HttpResponsePtr> getChannels(std::string query = "");
   drogon::Task<bool> channelExists(std::string_view channelId);
+  drogon::Task<void> joinChannel(std::string_view channelId);
+  drogon::Task<void> leaveChannel(std::string_view channelId);
   /// This method must be called by drogon to shutdown the plugin.
   /// It must be implemented by the user.
   void shutdown() override;

@@ -23,6 +23,8 @@ private:
 	std::map<std::string, LiveVideo> liveVideos;
 	std::optional<std::chrono::sys_time<std::chrono::milliseconds>> iso8601ToSysTime(const std::string& iso8601);
 	std::string youtubeApiKey;
+	std::mutex mutex_;
+	std::unordered_map<std::string, trantor::TimerId> check_timers_;
 public:
 	void initAndStart(const Json::Value& config) override;
 
