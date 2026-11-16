@@ -46,6 +46,17 @@ private:
     const std::unordered_map<std::string, std::string>& params = {}
   );
 
+  drogon::Task<drogon::HttpResponsePtr> postToTraQAPI(
+    const std::string& endpoint,
+    const std::unordered_map<std::string, std::string>& params = {}
+  );
+
+  drogon::Task<drogon::HttpResponsePtr> callTraQAPI(
+    const drogon::HttpMethod method,
+    const std::string& endpoint,
+    const std::unordered_map<std::string, std::string>& params = {}
+  );
+
 public:
   traQAPI() {}
   /// This method must be called by drogon to initialize and start the plugin.

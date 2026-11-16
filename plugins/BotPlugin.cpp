@@ -168,7 +168,7 @@ drogon::Task<drogon::HttpResponsePtr> BotPlugin::postComment(
 			if (check_timers_.contains(channelId.data()))
 				loop->invalidateTimer(check_timers_[channelId.data()]);
 			// 1分後に終了確認するタイマーをセット
-			trantor::TimerId timer_id = loop->runAfter(60.0, [this, channelId = std::string(channelId), youtubeID]() {
+			trantor::TimerId timer_id = loop->runAfter(checkInterval, [this, channelId = std::string(channelId), youtubeID]() {
 				drogon::async_run([this, channelId, youtubeID]() -> drogon::Task<void> {
 					auto videoInfoRaw = co_await YoutubeAPI::fetchLiveInfo(youtubeID, youtubeApiKey);
 					if (videoInfoRaw && videoInfoRaw->actualEndTime.has_value()) {

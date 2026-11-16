@@ -17,11 +17,18 @@
 #include <algorithm>
 #include <vector>
 #include "../controllers/websocket_comments.h"
+#include "../plugins/BotPlugin.h"
 
 extern std::atomic<unsigned int> g_youtubeVideosListCalls;
 extern std::mutex g_youtubeRequestMutex;
 extern std::string g_lastYoutubeVideoParts;
 extern std::string g_lastYoutubeVideoIds;
+extern std::mutex g_youtubeLiveInfoMutex;
+extern std::optional<std::string> g_mockActualStartTime;
+extern std::optional<std::string> g_mockActualEndTime;
+extern std::mutex g_traqLeaveMutex;
+extern std::condition_variable g_traqLeaveCv;
+extern std::atomic<unsigned int> g_traqLeaveCalls;
 
 drogon::HttpResponsePtr sendSyncRequest(
 	drogon::HttpMethod method,
@@ -46,6 +53,41 @@ drogon::HttpResponsePtr sendSyncRequest(
 	}
 
 	req->addHeader("X-Forwarded-User", authUser); // 認証フィルタを通すためのヘッダ
+
+	std::promise<drogon::HttpResponsePtr> prom;
+	auto future = prom.get_future();
+
+	client->sendRequest(req, [&prom](drogon::ReqResult res, const drogon::HttpResponsePtr& resp) {
+		if (res == drogon::ReqResult::Ok && resp != nullptr) {
+			prom.set_value(resp);
+		} else {
+			prom.set_value(nullptr); // 通信エラー
+		}
+		});
+	return future.get();
+}
+
+drogon::HttpResponsePtr sendBotRequest(
+	const std::string& traq_bot_token,
+	const std::string& eventType,
+	bool vaildMessage = true,
+	std::string messageId = "bc9106b3-f9b2-4eca-9ba1-72b39b40954e",
+	std::string createdAt = "2026-01-01T13:33:51.632149265Z"
+) {
+	Json::Value webhookBody;
+	if (vaildMessage) {
+		webhookBody["message"]["id"] = messageId;
+		webhookBody["message"]["channelId"] = "9aba50da-f605-4cd0-a428-5e4558cb911e";
+		webhookBody["message"]["plainText"] = "テストメッセージ";
+		webhookBody["message"]["createdAt"] = createdAt;
+	}
+
+	auto client = drogon::HttpClient::newHttpClient("http://127.0.0.1:8080");
+	auto req = drogon::HttpRequest::newHttpJsonRequest(webhookBody);
+	req->setMethod(drogon::Post);
+	req->setPath("/webhooks/traq");
+	req->addHeader("X-TRAQ-BOT-TOKEN", traq_bot_token);
+	req->addHeader("X-TRAQ-BOT-EVENT", eventType);
 
 	std::promise<drogon::HttpResponsePtr> prom;
 	auto future = prom.get_future();
@@ -1475,4 +1517,117 @@ DROGON_TEST(GET_STAMP_IMAGE_TEST)
 	auto notFoundResp = sendSyncRequest(drogon::Get, "/traq-api/stamps/not-found-stamp/image");
 	REQUIRE(notFoundResp != nullptr);
 	CHECK(notFoundResp->getStatusCode() == drogon::k500InternalServerError);
+}
+
+// traQ bot webhookテスト
+DROGON_TEST(TRAQ_BOT_WEBHOOK_TEST)
+{
+	const char* botToken = std::getenv("TRAQ_BOT_TOKEN");
+	std::string botTokenStr = botToken ? botToken : "";
+
+	// Token不一致は403
+	auto resp = sendBotRequest("dummy_token", "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k403Forbidden);
+
+	// PING等システムイベントは204
+	resp = sendBotRequest(botTokenStr, "PING");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k204NoContent);
+	resp = sendBotRequest(botTokenStr, "JOINED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k204NoContent);
+	resp = sendBotRequest(botTokenStr, "LEFT");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k204NoContent);
+
+	// 謎のイベントは400
+	resp = sendBotRequest(botTokenStr, "UNKNOWN_EVENT");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k400BadRequest);
+
+	// Bodyにmessageがない場合は400
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED", false);
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k400BadRequest);
+
+	// MESSAGE_CREATEDのテスト(チャンネル登録していないので404)
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k404NotFound);
+
+	// チャンネル登録
+	Json::Value exVideoBody;
+	exVideoBody["url"] = "https://youtu.be/live/LIVEVIDEO01";
+	exVideoBody["channel_id"] = "channel-id-001";
+	resp = sendSyncRequest(drogon::Post, "/api/ex-videos", exVideoBody);
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k201Created);
+
+	// MESSAGE_CREATEDのテスト(actualStartTimeが未設定なので400)
+	{
+		std::lock_guard<std::mutex> lock(g_youtubeLiveInfoMutex);
+		g_mockActualStartTime = std::nullopt;
+		g_mockActualEndTime = std::nullopt;
+	}
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k400BadRequest);
+
+	// actualStartTimeが設定されている場合のテスト
+	{
+		std::lock_guard<std::mutex> lock(g_youtubeLiveInfoMutex);
+		g_mockActualStartTime = "2026-01-01T12:00:00Z";
+		g_mockActualEndTime = std::nullopt;
+	}
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k200OK);
+
+	// コメント編集テスト
+	resp = sendBotRequest(botTokenStr, "MESSAGE_UPDATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k200OK);
+
+	// 存在しないコメントの編集テスト
+	resp = sendBotRequest(botTokenStr, "MESSAGE_UPDATED", true, "nonexistent-comment-id");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k404NotFound);
+
+	// 存在しないコメントの削除テスト
+	resp = sendBotRequest(botTokenStr, "MESSAGE_DELETED", true, "nonexistent-comment-id");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k404NotFound);
+
+	// コメント削除テスト
+	resp = sendBotRequest(botTokenStr, "MESSAGE_DELETED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k200OK);
+
+	// actualEndTimeが設定されている場合のテスト
+	auto* botPlugin = drogon::app().getPlugin<BotPlugin>();
+	REQUIRE(botPlugin != nullptr);
+	botPlugin->setCheckInterval(0.001);
+	{
+		std::lock_guard<std::mutex> lock(g_youtubeLiveInfoMutex);
+		g_mockActualStartTime = "2026-01-01T12:00:00Z";
+		g_mockActualEndTime = "2026-01-01T14:00:00Z";
+	}
+	g_traqLeaveCalls.store(0);
+	// 終了前最後のメッセージ
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k200OK);
+	// 大麻発火確認
+	{
+		std::unique_lock<std::mutex> lock(g_traqLeaveMutex);
+		bool finished = g_traqLeaveCv.wait_for(lock, std::chrono::seconds(1), []() {
+			return g_traqLeaveCalls.load() > 0;
+			});
+		CHECK(finished);
+	}
+	// 終了後のメッセージは無視されることを確認
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k404NotFound);
 }

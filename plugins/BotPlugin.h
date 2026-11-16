@@ -3,7 +3,7 @@
 #include <drogon/plugins/Plugin.h>
 #include <drogon/HttpController.h>
 #include <drogon/HttpClient.h>
-#include <expected>
+#include <json/json.h>
 #include <shared_mutex>
 #include <chrono>
 #include <atomic>
@@ -25,6 +25,7 @@ private:
 	std::string youtubeApiKey;
 	std::mutex mutex_;
 	std::unordered_map<std::string, trantor::TimerId> check_timers_;
+	double checkInterval = 60.0; // 1分ごとに終了確認する
 public:
 	void initAndStart(const Json::Value& config) override;
 
@@ -46,6 +47,10 @@ public:
 	drogon::Task<drogon::HttpResponsePtr> deleteComment(
 		std::string_view messageId
 	);
+	// テスト用
+	void setCheckInterval(double interval) {
+		checkInterval = interval;
+	}
 
 	void shutdown() override;
 };

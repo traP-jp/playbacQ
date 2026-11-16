@@ -36,7 +36,7 @@ drogon::Task<drogon::HttpResponsePtr> traQbot::asyncHandleHttpRequest(HttpReques
 	const std::string messageId = message.get("id", "").asString();
 	auto* botPlugin = drogon::app().getPlugin<BotPlugin>();
 	if (eventType == "MESSAGE_CREATED") {
-		const std::string channelId = message.get("channel", "").asString();
+		const std::string channelId = message.get("channelId", "").asString();
 		const std::string createdAt = message.get("createdAt", "").asString();
 		co_return co_await botPlugin->postComment(channelId, content, createdAt, messageId);
 	} else if (eventType == "MESSAGE_UPDATED") {

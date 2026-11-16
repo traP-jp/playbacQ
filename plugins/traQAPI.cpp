@@ -24,6 +24,21 @@ drogon::Task<drogon::HttpResponsePtr> traQAPI::getFromTraQAPI(
     const std::string& endpoint,
     const std::unordered_map<std::string, std::string>& params
 ) {
+    co_return co_await callTraQAPI(drogon::Get, endpoint, params);
+}
+
+drogon::Task<drogon::HttpResponsePtr> traQAPI::postToTraQAPI(
+    const std::string& endpoint,
+    const std::unordered_map<std::string, std::string>& params
+) {
+    co_return co_await callTraQAPI(drogon::Post, endpoint, params);
+}
+
+drogon::Task<drogon::HttpResponsePtr> traQAPI::callTraQAPI(
+    const drogon::HttpMethod method,
+    const std::string& endpoint,
+    const std::unordered_map<std::string, std::string>& params
+) {
     if (Token.empty()) {
         std::cerr << "TRAQ_TOKEN is not set. Cannot make request to traQ API." << std::endl;
         auto resp = drogon::HttpResponse::newHttpResponse();
@@ -34,7 +49,7 @@ drogon::Task<drogon::HttpResponsePtr> traQAPI::getFromTraQAPI(
     }
     try {
         auto req = drogon::HttpRequest::newHttpRequest();
-        req->setMethod(drogon::Get);
+        req->setMethod(method);
         req->setPath(endpoint);
         req->addHeader("Authorization", std::format("Bearer {}", Token));
         for (const auto& [key, value] : params) {
@@ -203,7 +218,7 @@ drogon::Task<bool> traQAPI::channelExists(std::string_view channelId)
 drogon::Task<void> traQAPI::joinChannel(std::string_view channelId)
 {
 
-    auto resp = co_await getFromTraQAPI(std::format("/api/v3/bots/{}/actions/join", BotId), {
+    auto resp = co_await postToTraQAPI(std::format("/api/v3/bots/{}/actions/join", BotId), {
         { "channelId", channelId.data() }
         });
     if (resp->getStatusCode() != drogon::k200OK)
@@ -213,7 +228,7 @@ drogon::Task<void> traQAPI::joinChannel(std::string_view channelId)
 
 drogon::Task<void> traQAPI::leaveChannel(std::string_view channelId)
 {
-    auto resp = co_await getFromTraQAPI(std::format("/api/v3/bots/{}/actions/leave", BotId), {
+    auto resp = co_await postToTraQAPI(std::format("/api/v3/bots/{}/actions/leave", BotId), {
         { "channelId", channelId.data() }
         });
     if (resp->getStatusCode() != drogon::k200OK)
