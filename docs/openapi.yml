@@ -944,7 +944,7 @@ paths:
       description: |
         traQサーバーからプッシュされるBotイベントを受信し、playbacQのコメントとして登録する。
       operationId: traqWebhook
-      x-tested: false
+      x-tested: true
       tags:
         - Webhook
       parameters:

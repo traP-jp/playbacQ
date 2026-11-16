@@ -47,6 +47,9 @@ int main(int argc, char** argv)
         config.password = "test_pass";
         config.connectionNumber = 3;
         config.name = "default";
+        config.characterSet = "utf8mb4";
+        config.isFast = false;
+        config.timeout = 0.0; 
         drogon::app().addDbClient(config);
 
         // Modalモックハンドラ: POST / で受信したvideo_idを記録
