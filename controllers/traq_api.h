@@ -10,7 +10,9 @@ public:
   METHOD_LIST_BEGIN;
   ADD_METHOD_TO(traq_api::fetchAllStamps, "/traq-api/stamps", Get, "AuthFilter");
   ADD_METHOD_TO(traq_api::getStampImage, "/traq-api/stamps/{1}/image", Get, "AuthFilter");
+  ADD_METHOD_TO(traq_api::getChannels, "/traq-api/channels", Get, "AuthFilter");
   METHOD_LIST_END;
   drogon::Task<drogon::HttpResponsePtr> fetchAllStamps(HttpRequestPtr req);
   drogon::Task<drogon::HttpResponsePtr> getStampImage(HttpRequestPtr req, std::string id);
+  drogon::Task<drogon::HttpResponsePtr> getChannels(HttpRequestPtr req);
 };

@@ -13,7 +13,17 @@ namespace YoutubeAPI {
 		std::optional<std::string> type;
 	};
 
+	struct LiveInfo {
+		std::optional<std::string> actualStartTime;
+		std::optional<std::string> actualEndTime;
+	};
+
 	drogon::Task<std::optional<VideoInfo>> fetchVideoInfo(
+		const std::string& videoId,
+		const std::string& apiKey
+	);
+
+	drogon::Task<std::optional<LiveInfo>> fetchLiveInfo(
 		const std::string& videoId,
 		const std::string& apiKey
 	);

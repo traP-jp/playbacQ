@@ -139,6 +139,13 @@ paths:
                   type: string
                   description: "動画のリンク"
                   example: "https://youtu.be/fV04ZVNpfIk"
+                channelId:
+                  type: string
+                  description: "ライブ配信用traQチャンネルのID。動画がライブ配信かつこのパラメータが設定されている場合、自動的にtraQチャンネルと紐づけられます。"
+                  example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                delay:
+                  type: integer
+                  description: "ライブ配信のtraQチャンネルへのコメント反映の遅延時間(秒)。デフォルトは15秒です。"
       responses:
         "201":
           description: "動画が作成されました。"
@@ -931,6 +938,57 @@ paths:
                 duration:
                   type: number
                   description: "動画の長さ(秒)"
+  /webhooks/traq:
+    post:
+      summary: "traQ Bot Webhook イベント受信"
+      description: |
+        traQサーバーからプッシュされるBotイベントを受信し、playbacQのコメントとして登録する。
+      operationId: traqWebhook
+      x-tested: true
+      tags:
+        - Webhook
+      parameters:
+        - name: X-TRAQ-BOT-EVENT
+          in: header
+          required: true
+          description: "イベント名"
+          schema:
+            type: string
+            enum:
+              - PING
+              - MESSAGE_CREATED
+              - MESSAGE_DELETED
+              - MESSAGE_UPDATED
+            example: MESSAGE_CREATED
+        - name: X-TRAQ-BOT-REQUEST-ID
+          in: header
+          required: true
+          description: "リクエストID"
+          schema:
+            type: string
+            format: uuid
+        - name: X-TRAQ-BOT-TOKEN
+          in: header
+          required: true
+          description: "VerificationToken"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/TraqPingPayload"
+                - $ref: "#/components/schemas/TraqMessageCreatedPayload"
+                - $ref: "#/components/schemas/TraqMessageDeletedPayload"
+      responses:
+        "204":
+          description: "イベント正常受理"
+        "400":
+          description: "リクエストが不正です。"
+        "403":
+          description: "X-TRAQ-BOT-TOKENが不正です。"
   /ws/comments:
     get:
       summary: "コメント送受信用WebSocket"
@@ -1153,7 +1211,7 @@ paths:
       summary: "スタンプリストの取得"
       description: "スタンプのリストを取得します。"
       operationId: getTraqStamps
-      x-tested: false
+      x-tested: true
       tags:
         - stamp
       responses:
@@ -1185,7 +1243,7 @@ paths:
       summary: "スタンプ画像を取得"
       description: "指定したIDのスタンプ画像を返します。"
       operationId: getTraqStampImage
-      x-tested: false
+      x-tested: true
       tags:
         - stamp
       parameters:
@@ -1209,6 +1267,45 @@ paths:
           description: "アクセスが拒否されました。"
         "404":
           description: "スタンプが見つかりませんでした。"
+        "500":
+          description: "サーバー内部エラー"
+  /traq-api/channels:
+    get:
+      summary: "チャンネルリストの取得"
+      description: "指定した文字列を含むチャンネルのリストを取得します。"
+      operationId: getTraqChannels
+      x-tested: false
+      tags:
+        - channel
+      parameters:
+        - name: query
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "チャンネル名の検索クエリ"
+      responses:
+        "200":
+          description: "チャンネルリストを返します。"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                      example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                      description: "チャンネルUUID"
+                    name:
+                      type: string
+                      example: "general"
+                      pattern: "^[a-zA-Z0-9_-]{1,32}$"
+                      description: "チャンネルの名前"
+        "403":
+          description: "アクセスが拒否されました。"
         "500":
           description: "サーバー内部エラー"
 components:
@@ -1304,3 +1401,130 @@ components:
           format: date-time
           readOnly: true
           description: "コメントの作成日時"
+    TraqPingPayload:
+      type: object
+      required:
+        - eventTime
+      properties:
+        eventTime:
+          type: string
+          format: date-time
+          example: "2019-05-07T04:50:48.582586882Z"
+    TraqMessageCreatedPayload:
+      type: object
+      required:
+        - eventTime
+        - message
+      properties:
+        eventTime:
+          type: string
+          format: date-time
+          example: "2019-05-07T04:50:48.582586882Z"
+        message:
+          type: object
+          required:
+            - id
+            - user
+            - channelId
+            - text
+            - plainText
+            - embedded
+            - createdAt
+            - updatedAt
+          properties:
+            id:
+              type: string
+              format: uuid
+              example: "bc9106b3-f9b2-4eca-9ba1-72b39b40954e"
+            user:
+              type: object
+              required:
+                - id
+                - name
+                - displayName
+                - iconId
+                - bot
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                  example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                name:
+                  type: string
+                  example: "user1"
+                displayName:
+                  type: string
+                  example: "User One"
+                iconId:
+                  type: string
+                  format: uuid
+                  example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                bot:
+                  type: boolean
+                  example: false
+            channelId:
+              type: string
+              format: uuid
+              example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+            text:
+              type: string
+              example: '!{"type": "user", "raw": "@takashi_trap", "id": "dfdff0c9-5de0-46ee-9721-2525e8bb3d45"} こんにちは'
+            plainText:
+              type: string
+              example: "@takashi_trap こんにちは"
+            embedded:
+              type: array
+              items:
+                type: object
+                required:
+                  - type
+                  - raw
+                  - id
+                properties:
+                  type:
+                    type: string
+                    enum:
+                      - user
+                      - channel
+                      - stamp
+                      - url
+                    example: "user"
+                  raw:
+                    type: string
+                    example: '!{"type": "user", "raw": "@takashi_trap", "id": "dfdff0c9-5de0-46ee-9721-2525e8bb3d45"}'
+                  id:
+                    type: string
+                    format: uuid
+                    example: "dfdff0c9-5de0-46ee-9721-2525e8bb3d45"
+            createdAt:
+              type: string
+              format: date-time
+              example: "2019-05-07T04:50:48.582586882Z"
+            updatedAt:
+              type: string
+              format: date-time
+              example: "2019-05-07T04:50:48.582586882Z"
+    TraqMessageDeletedPayload:
+      type: object
+      required:
+        - eventTime
+        - message
+      properties:
+        eventTime:
+          type: string
+          format: date-time
+          example: "2019-05-07T04:50:48.582586882Z"
+        message:
+          type: object
+          required:
+            - id
+            - channelId
+          properties:
+            id:
+              type: string
+              format: uuid
+              example: "bc9106b3-f9b2-4eca-9ba1-72b39b40954e"
+            channelId:
+              type: string
+              format: uuid
+              example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"

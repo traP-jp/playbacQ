@@ -17,11 +17,18 @@
 #include <algorithm>
 #include <vector>
 #include "../controllers/websocket_comments.h"
+#include "../plugins/BotPlugin.h"
 
 extern std::atomic<unsigned int> g_youtubeVideosListCalls;
 extern std::mutex g_youtubeRequestMutex;
 extern std::string g_lastYoutubeVideoParts;
 extern std::string g_lastYoutubeVideoIds;
+extern std::mutex g_youtubeLiveInfoMutex;
+extern std::optional<std::string> g_mockActualStartTime;
+extern std::optional<std::string> g_mockActualEndTime;
+extern std::mutex g_traqLeaveMutex;
+extern std::condition_variable g_traqLeaveCv;
+extern std::atomic<unsigned int> g_traqLeaveCalls;
 
 drogon::HttpResponsePtr sendSyncRequest(
 	drogon::HttpMethod method,
@@ -46,6 +53,41 @@ drogon::HttpResponsePtr sendSyncRequest(
 	}
 
 	req->addHeader("X-Forwarded-User", authUser); // 認証フィルタを通すためのヘッダ
+
+	std::promise<drogon::HttpResponsePtr> prom;
+	auto future = prom.get_future();
+
+	client->sendRequest(req, [&prom](drogon::ReqResult res, const drogon::HttpResponsePtr& resp) {
+		if (res == drogon::ReqResult::Ok && resp != nullptr) {
+			prom.set_value(resp);
+		} else {
+			prom.set_value(nullptr); // 通信エラー
+		}
+		});
+	return future.get();
+}
+
+drogon::HttpResponsePtr sendBotRequest(
+	const std::string& traq_bot_token,
+	const std::string& eventType,
+	bool vaildMessage = true,
+	std::string messageId = "bc9106b3-f9b2-4eca-9ba1-72b39b40954e",
+	std::string createdAt = "2026-01-01T13:33:51.632149265Z"
+) {
+	Json::Value webhookBody;
+	if (vaildMessage) {
+		webhookBody["message"]["id"] = messageId;
+		webhookBody["message"]["channelId"] = "channel-id-001";
+		webhookBody["message"]["plainText"] = "テストメッセージ";
+		webhookBody["message"]["createdAt"] = createdAt;
+	}
+
+	auto client = drogon::HttpClient::newHttpClient("http://127.0.0.1:8080");
+	auto req = drogon::HttpRequest::newHttpJsonRequest(webhookBody);
+	req->setMethod(drogon::Post);
+	req->setPath("/webhooks/traq");
+	req->addHeader("X-TRAQ-BOT-TOKEN", traq_bot_token);
+	req->addHeader("X-TRAQ-BOT-EVENT", eventType);
 
 	std::promise<drogon::HttpResponsePtr> prom;
 	auto future = prom.get_future();
@@ -245,17 +287,17 @@ DROGON_TEST(EditVideoMassAssignmentTest)
 	const Json::Value beforeJson = *beforeJsonPtr;
 
 	const std::vector<std::pair<std::string, Json::Value>> protectedFields = {
-		{"video_id", "attacker-video"},
-		{"user_id", "otheruser"},
-		{"thumbnail_url", "https://example.com/example.png"},
-		{"video_url", "https://example.com/watch/attacker-video"},
-		{"created_at", "2008-04-23 00:31:07"},
-		{"view_count", 999999999},
-		{"duration", 8},
-		{"like_count", 999999999},
-		{"status", 2},
-		{"is_external", 1},
-		{"type", "youtube"},
+		{ "video_id", "attacker-video" },
+		{ "user_id", "otheruser" },
+		{ "thumbnail_url", "https://example.com/example.png" },
+		{ "video_url", "https://example.com/watch/attacker-video" },
+		{ "created_at", "2008-04-23 00:31:07" },
+		{ "view_count", 999999999 },
+		{ "duration", 8 },
+		{ "like_count", 999999999 },
+		{ "status", 2 },
+		{ "is_external", 1 },
+		{ "type", "youtube" },
 	};
 
 	for (const auto& [field, value] : protectedFields) {
@@ -708,9 +750,9 @@ DROGON_TEST(SearchTest)
 	std::string videoId5 = videoId5Opt.value();
 	// 投稿された動画の中から検索
 	std::unordered_map<std::string, std::string> queries = {
-		{"search", "動画"},
-		{"sortby", "title"},
-		{"order", "1"}
+		{ "search", "動画" },
+		{ "sortby", "title" },
+		{ "order", "1" }
 	};
 	auto searchResp = sendSyncRequest(drogon::Get, "/api/videos", Json::Value::null, queries);
 	REQUIRE(searchResp != nullptr);
@@ -725,9 +767,9 @@ DROGON_TEST(SearchTest)
 	CHECK((*searchJson)[3]["video_id"].asString() == videoId4);
 	// 検索その2
 	queries = {
-		{"search", "em"},
-		{"sortby", "title"},
-		{"order", "0"}
+		{ "search", "em" },
+		{ "sortby", "title" },
+		{ "order", "0" }
 	};
 	searchResp = sendSyncRequest(drogon::Get, "/api/videos", Json::Value::null, queries);
 	REQUIRE(searchResp != nullptr);
@@ -752,10 +794,10 @@ DROGON_TEST(SearchTest)
 	CHECK(tagResp->getStatusCode() == drogon::k200OK);
 	// タグ検索
 	queries = {
-		{"search", "ー"},
-		{"tag", "かわいい"},
-		{"sortby", "title"},
-		{"order", "1"}
+		{ "search", "ー" },
+		{ "tag", "かわいい" },
+		{ "sortby", "title" },
+		{ "order", "1" }
 	};
 	searchResp = sendSyncRequest(drogon::Get, "/api/videos", Json::Value::null, queries);
 	REQUIRE(searchResp != nullptr);
@@ -776,10 +818,10 @@ DROGON_TEST(SearchTest)
 	CHECK(tagResp->getStatusCode() == drogon::k200OK);
 	// タグ検索2
 	queries = {
-		{"search", ""},
-		{"tag", "人類には早すぎる動画"},
-		{"sortby", "title"},
-		{"order", "1"}
+		{ "search", "" },
+		{ "tag", "人類には早すぎる動画" },
+		{ "sortby", "title" },
+		{ "order", "1" }
 	};
 	searchResp = sendSyncRequest(drogon::Get, "/api/videos", Json::Value::null, queries);
 	REQUIRE(searchResp != nullptr);
@@ -821,7 +863,7 @@ DROGON_TEST(SearchTest)
 	CHECK(deleteVideo(videoId5) == true);
 	// タグのクリーンアップ
 	std::unordered_map<std::string, std::string> CleanupQueries = {
-	{"query", "%"},
+	{ "query", "%" },
 	};
 	auto allTagsResp = sendSyncRequest(drogon::Get, "/api/tag", Json::Value::null, CleanupQueries);
 	REQUIRE(allTagsResp != nullptr);
@@ -884,7 +926,8 @@ DROGON_TEST(ProgressTest)
 			"VALUES (?, 'test_user', 'https://example.com/video.mp4', '進捗テスト', 1)",
 			videoId
 		);
-	} catch (const drogon::orm::DrogonDbException& e) {
+	}
+	catch (const drogon::orm::DrogonDbException& e) {
 		std::cerr << "DB Error: " << e.base().what() << std::endl;
 	}
 
@@ -916,7 +959,8 @@ DROGON_TEST(ProgressTest)
 	// クリーンアップ
 	try {
 		dbClient->execSqlSync("DELETE FROM videos WHERE video_id = ?", videoId);
-	} catch (const drogon::orm::DrogonDbException& e) {
+	}
+	catch (const drogon::orm::DrogonDbException& e) {
 		std::cerr << "DB Cleanup Error: " << e.base().what() << std::endl;
 	}
 }
@@ -1083,7 +1127,7 @@ DROGON_TEST(TagTest)
 	}
 	// タグ検索
 	std::unordered_map<std::string, std::string> queries = {
-		{"query", "す"},
+		{ "query", "す" },
 	};
 	auto searchResp = sendSyncRequest(drogon::Get, "/api/tag", Json::Value::null, queries);
 	REQUIRE(searchResp != nullptr);
@@ -1149,7 +1193,7 @@ DROGON_TEST(TagTest)
 	CHECK(deleteVideo(videoId2) == true);
 	// タグのクリーンアップ
 	std::unordered_map<std::string, std::string> CleanupQueries = {
-	{"query", "%"},
+	{ "query", "%" },
 	};
 	auto allTagsResp = sendSyncRequest(drogon::Get, "/api/tag", Json::Value::null, CleanupQueries);
 	REQUIRE(allTagsResp != nullptr);
@@ -1238,7 +1282,7 @@ DROGON_TEST(AuthRedirectTest)
 				drogon::Get,
 				"/api/auth/login",
 				Json::Value::null,
-				{ {"redirect", redirect} }
+				{ { "redirect", redirect } }
 			);
 			REQUIRE(validResp != nullptr);
 			CHECK(validResp->getStatusCode() == drogon::k302Found);
@@ -1250,7 +1294,7 @@ DROGON_TEST(AuthRedirectTest)
 		drogon::Get,
 		"/api/auth/login",
 		Json::Value::null,
-		{ {"redirect", frontendOrigin} }
+		{ { "redirect", frontendOrigin } }
 	);
 	REQUIRE(originOnlyResp != nullptr);
 	CHECK(originOnlyResp->getStatusCode() == drogon::k302Found);
@@ -1276,7 +1320,7 @@ DROGON_TEST(AuthRedirectTest)
 			drogon::Get,
 			"/api/auth/login",
 			Json::Value::null,
-			{ {"redirect", unsafeRedirect} }
+			{ { "redirect", unsafeRedirect } }
 		);
 		REQUIRE(unsafeResp != nullptr);
 		CHECK(unsafeResp->getStatusCode() == drogon::k302Found);
@@ -1473,4 +1517,118 @@ DROGON_TEST(GET_STAMP_IMAGE_TEST)
 	auto notFoundResp = sendSyncRequest(drogon::Get, "/traq-api/stamps/not-found-stamp/image");
 	REQUIRE(notFoundResp != nullptr);
 	CHECK(notFoundResp->getStatusCode() == drogon::k500InternalServerError);
+}
+
+// traQ bot webhookテスト
+DROGON_TEST(TRAQ_BOT_WEBHOOK_TEST)
+{
+	const char* botToken = std::getenv("TRAQ_BOT_TOKEN");
+	std::string botTokenStr = botToken ? botToken : "";
+
+	// Token不一致は403
+	auto resp = sendBotRequest("dummy_token", "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k403Forbidden);
+
+	// PING等システムイベントは204
+	resp = sendBotRequest(botTokenStr, "PING");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k204NoContent);
+	resp = sendBotRequest(botTokenStr, "JOINED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k204NoContent);
+	resp = sendBotRequest(botTokenStr, "LEFT");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k204NoContent);
+
+	// 謎のイベントは400
+	resp = sendBotRequest(botTokenStr, "UNKNOWN_EVENT");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k400BadRequest);
+
+	// Bodyにmessageがない場合は400
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED", false);
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k400BadRequest);
+
+	// MESSAGE_CREATEDのテスト(チャンネル登録していないので404)
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k404NotFound);
+
+	// チャンネル登録
+	Json::Value exVideoBody;
+	exVideoBody["url"] = "https://www.youtube.com/live/LIVEVIDEO01";
+	exVideoBody["channel_id"] = "channel-id-001";
+	resp = sendSyncRequest(drogon::Post, "/api/ex-videos", exVideoBody);
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k201Created);
+
+	// MESSAGE_CREATEDのテスト(actualStartTimeが未設定なので400)
+	{
+		std::lock_guard<std::mutex> lock(g_youtubeLiveInfoMutex);
+		g_mockActualStartTime = std::nullopt;
+		g_mockActualEndTime = std::nullopt;
+	}
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k400BadRequest);
+
+	// actualStartTimeが設定されている場合のテスト
+	{
+		std::lock_guard<std::mutex> lock(g_youtubeLiveInfoMutex);
+		g_mockActualStartTime = "2026-01-01T12:00:00Z";
+		g_mockActualEndTime = std::nullopt;
+	}
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k201Created);
+
+	// コメント編集テスト
+	resp = sendBotRequest(botTokenStr, "MESSAGE_UPDATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k200OK);
+	std::cout << "[INFO] MESSAGE_UPDATED response body: " << resp->getBody() << std::endl;
+
+	// 存在しないコメントの編集テスト
+	resp = sendBotRequest(botTokenStr, "MESSAGE_UPDATED", true, "nonexistent-comment-id");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k404NotFound);
+
+	// 存在しないコメントの削除テスト
+	resp = sendBotRequest(botTokenStr, "MESSAGE_DELETED", true, "nonexistent-comment-id");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k404NotFound);
+
+	// コメント削除テスト
+	resp = sendBotRequest(botTokenStr, "MESSAGE_DELETED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k200OK);
+
+	// actualEndTimeが設定されている場合のテスト
+	auto* botPlugin = drogon::app().getPlugin<BotPlugin>();
+	REQUIRE(botPlugin != nullptr);
+	botPlugin->setCheckInterval(0.001);
+	{
+		std::lock_guard<std::mutex> lock(g_youtubeLiveInfoMutex);
+		g_mockActualStartTime = "2026-01-01T12:00:00Z";
+		g_mockActualEndTime = "2026-01-01T14:00:00Z";
+	}
+	g_traqLeaveCalls.store(0);
+	// 終了前最後のメッセージ
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k201Created);
+	// 大麻発火確認
+	{
+		std::unique_lock<std::mutex> lock(g_traqLeaveMutex);
+		bool finished = g_traqLeaveCv.wait_for(lock, std::chrono::seconds(3), []() {
+			return g_traqLeaveCalls.load() > 0;
+			});
+		CHECK(finished);
+	}
+	// 終了後のメッセージは無視されることを確認
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k404NotFound);
 }

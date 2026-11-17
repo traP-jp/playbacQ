@@ -10,15 +10,35 @@ void traQAPI::initAndStart(const Json::Value& config)
     if (const char* apiUrl = std::getenv("TRAQ_API_URL"); apiUrl != nullptr) {
         ApiUrl = apiUrl;
     }
-    if (Token.empty() || ApiUrl.empty()) {
-        std::cerr << "TRAQ_TOKEN or TRAQ_API_URL is not set. traQAPI plugin will not be initialized." << std::endl;
+    if (const char* botId = std::getenv("TRAQ_BOT_ID"); botId != nullptr) {
+        BotId = botId;
+    }
+    if (Token.empty() || ApiUrl.empty() || BotId.empty()) {
+        std::cerr << "TRAQ_TOKEN or TRAQ_API_URL or TRAQ_BOT_ID is not set. traQAPI plugin will not be initialized." << std::endl;
         return;
     }
     client = drogon::HttpClient::newHttpClient(ApiUrl);
 }
 
-drogon::Task<drogon::HttpResponsePtr> traQAPI::getFromTraQAPI(const std::string& endpoint)
-{
+drogon::Task<drogon::HttpResponsePtr> traQAPI::getFromTraQAPI(
+    const std::string& endpoint,
+    const std::unordered_map<std::string, std::string>& params
+) {
+    co_return co_await callTraQAPI(drogon::Get, endpoint, params);
+}
+
+drogon::Task<drogon::HttpResponsePtr> traQAPI::postToTraQAPI(
+    const std::string& endpoint,
+    const std::unordered_map<std::string, std::string>& params
+) {
+    co_return co_await callTraQAPI(drogon::Post, endpoint, params);
+}
+
+drogon::Task<drogon::HttpResponsePtr> traQAPI::callTraQAPI(
+    const drogon::HttpMethod method,
+    const std::string& endpoint,
+    const std::unordered_map<std::string, std::string>& params
+) {
     if (Token.empty()) {
         std::cerr << "TRAQ_TOKEN is not set. Cannot make request to traQ API." << std::endl;
         auto resp = drogon::HttpResponse::newHttpResponse();
@@ -29,27 +49,33 @@ drogon::Task<drogon::HttpResponsePtr> traQAPI::getFromTraQAPI(const std::string&
     }
     try {
         auto req = drogon::HttpRequest::newHttpRequest();
-        req->setMethod(drogon::Get);
+        req->setMethod(method);
         req->setPath(endpoint);
         req->addHeader("Authorization", std::format("Bearer {}", Token));
+        for (const auto& [key, value] : params) {
+            req->setParameter(key, value);
+        }
         auto resp = co_await client->sendRequestCoro(req);
 
         if (resp->getStatusCode() != drogon::k200OK) {
-            std::cerr << "Error fetching stamps: " << resp->getBody() << std::endl;
+            std::cerr << std::format("traQ API error ({}): {}",
+                static_cast<int>(resp->getStatusCode()),
+                resp->getBody()) << std::endl;
             auto errorResp = drogon::HttpResponse::newHttpResponse();
-            errorResp->setStatusCode(drogon::k500InternalServerError);
+            errorResp->setStatusCode(resp->getStatusCode() >= 500
+                ? drogon::k502BadGateway : resp->getStatusCode());
             errorResp->setContentTypeCode(drogon::CT_TEXT_PLAIN);
-            errorResp->setBody(std::format("Error fetching stamps: {}", resp->getBody()));
+            errorResp->setBody("Failed to fetch data from traQ API");
             co_return errorResp;
         }
         co_return resp;
     }
     catch (const std::exception& e) {
-        std::cerr << "Error fetching stamps: " << e.what() << std::endl;
+        std::cerr << "Exception while calling traQ API: " << e.what() << std::endl;
         auto resp = drogon::HttpResponse::newHttpResponse();
-        resp->setStatusCode(drogon::k500InternalServerError);
+        resp->setStatusCode(drogon::k502BadGateway);
         resp->setContentTypeCode(drogon::CT_TEXT_PLAIN);
-        resp->setBody(std::string("Error fetching stamps: ") + e.what());
+        resp->setBody("Bad Gateway");
         co_return resp;
     }
 }
@@ -157,6 +183,57 @@ drogon::Task<std::expected<std::pair<std::string, std::string>, drogon::HttpResp
         }
     }
     co_return std::make_pair(std::move(imageData), std::move(contentType));
+}
+
+drogon::Task<drogon::HttpResponsePtr> traQAPI::getChannels(std::string query)
+{
+    // queryが安全か確認
+    if ([&query]() -> bool {
+        if (query.empty()) return false;
+        // 512文字以上のチャンネルは存在しないはず
+            if (query.size() > 512) return true;
+            return !std::ranges::none_of(query, [](unsigned char c) {
+                return std::iscntrl(c);
+                });
+        }()) {
+        auto badReq = drogon::HttpResponse::newHttpResponse();
+        badReq->setStatusCode(drogon::k400BadRequest);
+        badReq->setContentTypeCode(drogon::CT_TEXT_PLAIN);
+        badReq->setBody("Invalid query parameter");
+        co_return badReq;
+    }
+
+    co_return co_await getFromTraQAPI("/api/v3/channels", {
+        { "include-dm", "false" },
+        { "path", query }
+        });
+}
+
+drogon::Task<bool> traQAPI::channelExists(std::string_view channelId)
+{
+    auto resp = co_await getFromTraQAPI(std::format("/api/v3/channels/{}", channelId));
+    co_return resp->getStatusCode() == drogon::k200OK;
+}
+
+drogon::Task<void> traQAPI::joinChannel(std::string_view channelId)
+{
+
+    auto resp = co_await postToTraQAPI(std::format("/api/v3/bots/{}/actions/join", BotId), {
+        { "channelId", channelId.data() }
+        });
+    if (resp->getStatusCode() != drogon::k200OK)
+        throw std::runtime_error(std::format("Failed to join channel: {}. Error: {}", channelId, resp->getBody()));
+    co_return;
+}
+
+drogon::Task<void> traQAPI::leaveChannel(std::string_view channelId)
+{
+    auto resp = co_await postToTraQAPI(std::format("/api/v3/bots/{}/actions/leave", BotId), {
+        { "channelId", channelId.data() }
+        });
+    if (resp->getStatusCode() != drogon::k200OK)
+        throw std::runtime_error(std::format("Failed to leave channel: {}. Error: {}", channelId, resp->getBody()));
+    co_return;
 }
 
 void traQAPI::shutdown()

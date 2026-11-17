@@ -27,6 +27,7 @@ erDiagram
 	datetime created_at
 	text option
 	TINYINT status
+	varchar traq_message_id
   }
 
   video_likes {
@@ -45,10 +46,19 @@ erDiagram
 	int tag_id PK,FK
 	int status
   }
+
+  live_videos {
+	varchar video_id PK,FK
+	varchar live_video_id
+	varchar channel_id PK
+	double delay
+	DATETIME(3) actual_start_time
+  }
   
   videos||--o{comments : has
   videos||--o{video_tags : has
   tags||--o{video_tags : tagged_with
   videos||--o{video_likes : has
+  videos||--o{live_videos : has
 ```
 

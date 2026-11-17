@@ -1,0 +1,17 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 80%          # プロジェクト全体の目標カバレッジ
+        threshold: 1%        # 目標から最大何%の低下まで許容するか
+        if_ci_failed: error  # CI 自体が失敗した場合の扱い
+    patch:
+      default:
+        target: 70%          # PR の差分（新規・変更行）の目標カバレッジ
+        threshold: 5%        # 差分カバレッジの許容低下幅
+        if_ci_failed: error
+
+comment:
+  layout: "reach,diff,flags,files"  # PR コメントに表示する情報
+  behavior: default                  # コメントを新規作成 or 更新
+  require_changes: false             # カバレッジ変化がなくてもコメントする

@@ -108,4 +108,57 @@ namespace YoutubeAPI {
 			co_return std::nullopt;
 		}
 	}
+
+	drogon::Task<std::optional<LiveInfo>> fetchLiveInfo(
+		const std::string& videoId,
+		const std::string& apiKey
+	) {
+		if (videoId.empty()) {
+			co_return std::nullopt;
+		}
+
+		auto client = drogon::HttpClient::newHttpClient(youtubeApiBaseUrl());
+		auto req = drogon::HttpRequest::newHttpRequest();
+		req->setMethod(drogon::Get);
+		req->setPath("/youtube/v3/videos");
+		req->setParameter("part", "liveStreamingDetails");
+		req->setParameter("id", videoId);
+		req->setParameter("key", apiKey);
+		try {
+			auto resp = co_await client->sendRequestCoro(req);
+			if (resp->getStatusCode() != drogon::k200OK) {
+				std::cerr << "Failed to fetch live info. HTTP Status: "
+					<< resp->getStatusCode() << std::endl;
+				co_return std::nullopt;
+			}
+
+			auto json = resp->getJsonObject();
+			if (!json || !(*json)["items"].isArray() || (*json)["items"].empty()) {
+				std::cerr << "Invalid videos.list response" << std::endl;
+				co_return std::nullopt;
+			}
+
+			const Json::Value& item = (*json)["items"][0];
+			if (!item.isObject() || !item["id"].isString() || item["id"].asString() != videoId) {
+				std::cerr << "videos.list returned an unexpected video resource" << std::endl;
+				co_return std::nullopt;
+			}
+
+			const Json::Value& liveDetails = item["liveStreamingDetails"];
+			LiveInfo info;
+			if (liveDetails.isObject()) {
+				if (liveDetails.isMember("actualStartTime") && liveDetails["actualStartTime"].isString()) {
+					info.actualStartTime = liveDetails["actualStartTime"].asString();
+				}
+				if (liveDetails.isMember("actualEndTime") && liveDetails["actualEndTime"].isString()) {
+					info.actualEndTime = liveDetails["actualEndTime"].asString();
+				}
+			}
+			co_return info;
+		}
+		catch (const std::exception& e) {
+			std::cerr << "Error fetching live info: " << e.what() << std::endl;
+			co_return std::nullopt;
+		}
+	}
 }

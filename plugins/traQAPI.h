@@ -3,6 +3,7 @@
 #include <drogon/plugins/Plugin.h>
 #include <drogon/HttpController.h>
 #include <drogon/HttpClient.h>
+#include <json/json.h>
 #include <expected>
 #include <shared_mutex>
 #include <chrono>
@@ -34,12 +35,28 @@ private:
 
   std::string Token;
   std::string ApiUrl;
+  std::string BotId;
   drogon::HttpClientPtr client;
   std::shared_mutex mutex;
   allStampsCacheEntry allStampsCache;
   std::unordered_map<std::string, stampImageCacheEntry> stampImageCache;
 
-  drogon::Task<drogon::HttpResponsePtr> getFromTraQAPI(const std::string& endpoint);
+  drogon::Task<drogon::HttpResponsePtr> getFromTraQAPI(
+    const std::string& endpoint,
+    const std::unordered_map<std::string, std::string>& params = {}
+  );
+
+  drogon::Task<drogon::HttpResponsePtr> postToTraQAPI(
+    const std::string& endpoint,
+    const std::unordered_map<std::string, std::string>& params = {}
+  );
+
+  drogon::Task<drogon::HttpResponsePtr> callTraQAPI(
+    const drogon::HttpMethod method,
+    const std::string& endpoint,
+    const std::unordered_map<std::string, std::string>& params = {}
+  );
+
 public:
   traQAPI() {}
   /// This method must be called by drogon to initialize and start the plugin.
@@ -48,8 +65,11 @@ public:
 
   drogon::Task<std::expected<Json::Value, drogon::HttpResponsePtr>> fetchAllStamps();
   drogon::Task<std::expected<std::pair<std::string, std::string>, drogon::HttpResponsePtr>> getStampImage(std::string id);
+  drogon::Task<drogon::HttpResponsePtr> getChannels(std::string query = "");
+  drogon::Task<bool> channelExists(std::string_view channelId);
+  drogon::Task<void> joinChannel(std::string_view channelId);
+  drogon::Task<void> leaveChannel(std::string_view channelId);
   /// This method must be called by drogon to shutdown the plugin.
   /// It must be implemented by the user.
   void shutdown() override;
 };
-

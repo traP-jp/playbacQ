@@ -9,6 +9,13 @@
 			"name": "traQAPI",
 			"dependencies": [],
 			"config": {}
+		},
+		{
+			"name": "BotPlugin",
+			"dependencies": [
+				"traQAPI"
+			],
+			"config": {}
 		}
 	],
 	"redis_clients": [
