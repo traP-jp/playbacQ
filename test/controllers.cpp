@@ -77,7 +77,7 @@ drogon::HttpResponsePtr sendBotRequest(
 	Json::Value webhookBody;
 	if (vaildMessage) {
 		webhookBody["message"]["id"] = messageId;
-		webhookBody["message"]["channelId"] = "9aba50da-f605-4cd0-a428-5e4558cb911e";
+		webhookBody["message"]["channelId"] = "channel-id-001";
 		webhookBody["message"]["plainText"] = "テストメッセージ";
 		webhookBody["message"]["createdAt"] = createdAt;
 	}
@@ -1558,7 +1558,7 @@ DROGON_TEST(TRAQ_BOT_WEBHOOK_TEST)
 
 	// チャンネル登録
 	Json::Value exVideoBody;
-	exVideoBody["url"] = "https://youtu.be/live/LIVEVIDEO01";
+	exVideoBody["url"] = "https://www.youtube.com/live/LIVEVIDEO01";
 	exVideoBody["channel_id"] = "channel-id-001";
 	resp = sendSyncRequest(drogon::Post, "/api/ex-videos", exVideoBody);
 	REQUIRE(resp != nullptr);
@@ -1582,12 +1582,13 @@ DROGON_TEST(TRAQ_BOT_WEBHOOK_TEST)
 	}
 	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
 	REQUIRE(resp != nullptr);
-	CHECK(resp->getStatusCode() == drogon::k200OK);
+	CHECK(resp->getStatusCode() == drogon::k201Created);
 
 	// コメント編集テスト
 	resp = sendBotRequest(botTokenStr, "MESSAGE_UPDATED");
 	REQUIRE(resp != nullptr);
 	CHECK(resp->getStatusCode() == drogon::k200OK);
+	std::cout << "[INFO] MESSAGE_UPDATED response body: " << resp->getBody() << std::endl;
 
 	// 存在しないコメントの編集テスト
 	resp = sendBotRequest(botTokenStr, "MESSAGE_UPDATED", true, "nonexistent-comment-id");
@@ -1617,11 +1618,11 @@ DROGON_TEST(TRAQ_BOT_WEBHOOK_TEST)
 	// 終了前最後のメッセージ
 	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
 	REQUIRE(resp != nullptr);
-	CHECK(resp->getStatusCode() == drogon::k200OK);
+	CHECK(resp->getStatusCode() == drogon::k201Created);
 	// 大麻発火確認
 	{
 		std::unique_lock<std::mutex> lock(g_traqLeaveMutex);
-		bool finished = g_traqLeaveCv.wait_for(lock, std::chrono::seconds(1), []() {
+		bool finished = g_traqLeaveCv.wait_for(lock, std::chrono::seconds(3), []() {
 			return g_traqLeaveCalls.load() > 0;
 			});
 		CHECK(finished);

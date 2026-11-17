@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS video_likes (
 );
 CREATE TABLE IF NOT EXISTS live_videos (
 	video_id VARCHAR(255),
+	live_video_id VARCHAR(255),
 	channel_id VARCHAR(255),
 	delay DOUBLE NOT NULL,
 	actual_start_time DATETIME(3) DEFAULT NULL,

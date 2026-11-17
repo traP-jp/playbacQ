@@ -14,6 +14,7 @@ using namespace drogon::orm;
 using namespace drogon_model::playbacq;
 
 const std::string LiveVideos::Cols::_video_id = "video_id";
+const std::string LiveVideos::Cols::_live_video_id = "live_video_id";
 const std::string LiveVideos::Cols::_channel_id = "channel_id";
 const std::string LiveVideos::Cols::_delay = "delay";
 const std::string LiveVideos::Cols::_actual_start_time = "actual_start_time";
@@ -23,6 +24,7 @@ const std::string LiveVideos::tableName = "live_videos";
 
 const std::vector<typename LiveVideos::MetaData> LiveVideos::metaData_={
 {"video_id","std::string","varchar(255)",255,0,1,1},
+{"live_video_id","std::string","varchar(255)",255,0,0,0},
 {"channel_id","std::string","varchar(255)",255,0,1,1},
 {"delay","double","double",8,0,0,1},
 {"actual_start_time","::trantor::Date","datetime(3)",0,0,0,0}
@@ -39,6 +41,10 @@ LiveVideos::LiveVideos(const Row &r, const ssize_t indexOffset) noexcept
         if(!r["video_id"].isNull())
         {
             videoId_=std::make_shared<std::string>(r["video_id"].as<std::string>());
+        }
+        if(!r["live_video_id"].isNull())
+        {
+            liveVideoId_=std::make_shared<std::string>(r["live_video_id"].as<std::string>());
         }
         if(!r["channel_id"].isNull())
         {
@@ -74,7 +80,7 @@ LiveVideos::LiveVideos(const Row &r, const ssize_t indexOffset) noexcept
     else
     {
         size_t offset = (size_t)indexOffset;
-        if(offset + 4 > r.size())
+        if(offset + 5 > r.size())
         {
             LOG_FATAL << "Invalid SQL result for this model";
             return;
@@ -88,14 +94,19 @@ LiveVideos::LiveVideos(const Row &r, const ssize_t indexOffset) noexcept
         index = offset + 1;
         if(!r[index].isNull())
         {
-            channelId_=std::make_shared<std::string>(r[index].as<std::string>());
+            liveVideoId_=std::make_shared<std::string>(r[index].as<std::string>());
         }
         index = offset + 2;
         if(!r[index].isNull())
         {
-            delay_=std::make_shared<double>(r[index].as<double>());
+            channelId_=std::make_shared<std::string>(r[index].as<std::string>());
         }
         index = offset + 3;
+        if(!r[index].isNull())
+        {
+            delay_=std::make_shared<double>(r[index].as<double>());
+        }
+        index = offset + 4;
         if(!r[index].isNull())
         {
             auto timeStr = r[index].as<std::string>();
@@ -124,7 +135,7 @@ LiveVideos::LiveVideos(const Row &r, const ssize_t indexOffset) noexcept
 
 LiveVideos::LiveVideos(const Json::Value &pJson, const std::vector<std::string> &pMasqueradingVector) noexcept(false)
 {
-    if(pMasqueradingVector.size() != 4)
+    if(pMasqueradingVector.size() != 5)
     {
         LOG_ERROR << "Bad masquerading vector";
         return;
@@ -142,7 +153,7 @@ LiveVideos::LiveVideos(const Json::Value &pJson, const std::vector<std::string> 
         dirtyFlag_[1] = true;
         if(!pJson[pMasqueradingVector[1]].isNull())
         {
-            channelId_=std::make_shared<std::string>(pJson[pMasqueradingVector[1]].asString());
+            liveVideoId_=std::make_shared<std::string>(pJson[pMasqueradingVector[1]].asString());
         }
     }
     if(!pMasqueradingVector[2].empty() && pJson.isMember(pMasqueradingVector[2]))
@@ -150,7 +161,7 @@ LiveVideos::LiveVideos(const Json::Value &pJson, const std::vector<std::string> 
         dirtyFlag_[2] = true;
         if(!pJson[pMasqueradingVector[2]].isNull())
         {
-            delay_=std::make_shared<double>(pJson[pMasqueradingVector[2]].asDouble());
+            channelId_=std::make_shared<std::string>(pJson[pMasqueradingVector[2]].asString());
         }
     }
     if(!pMasqueradingVector[3].empty() && pJson.isMember(pMasqueradingVector[3]))
@@ -158,7 +169,15 @@ LiveVideos::LiveVideos(const Json::Value &pJson, const std::vector<std::string> 
         dirtyFlag_[3] = true;
         if(!pJson[pMasqueradingVector[3]].isNull())
         {
-            auto timeStr = pJson[pMasqueradingVector[3]].asString();
+            delay_=std::make_shared<double>(pJson[pMasqueradingVector[3]].asDouble());
+        }
+    }
+    if(!pMasqueradingVector[4].empty() && pJson.isMember(pMasqueradingVector[4]))
+    {
+        dirtyFlag_[4] = true;
+        if(!pJson[pMasqueradingVector[4]].isNull())
+        {
+            auto timeStr = pJson[pMasqueradingVector[4]].asString();
             struct tm stm;
             memset(&stm,0,sizeof(stm));
             auto p = strptime(timeStr.c_str(),"%Y-%m-%d %H:%M:%S",&stm);
@@ -191,9 +210,17 @@ LiveVideos::LiveVideos(const Json::Value &pJson) noexcept(false)
             videoId_=std::make_shared<std::string>(pJson["video_id"].asString());
         }
     }
-    if(pJson.isMember("channel_id"))
+    if(pJson.isMember("live_video_id"))
     {
         dirtyFlag_[1]=true;
+        if(!pJson["live_video_id"].isNull())
+        {
+            liveVideoId_=std::make_shared<std::string>(pJson["live_video_id"].asString());
+        }
+    }
+    if(pJson.isMember("channel_id"))
+    {
+        dirtyFlag_[2]=true;
         if(!pJson["channel_id"].isNull())
         {
             channelId_=std::make_shared<std::string>(pJson["channel_id"].asString());
@@ -201,7 +228,7 @@ LiveVideos::LiveVideos(const Json::Value &pJson) noexcept(false)
     }
     if(pJson.isMember("delay"))
     {
-        dirtyFlag_[2]=true;
+        dirtyFlag_[3]=true;
         if(!pJson["delay"].isNull())
         {
             delay_=std::make_shared<double>(pJson["delay"].asDouble());
@@ -209,7 +236,7 @@ LiveVideos::LiveVideos(const Json::Value &pJson) noexcept(false)
     }
     if(pJson.isMember("actual_start_time"))
     {
-        dirtyFlag_[3]=true;
+        dirtyFlag_[4]=true;
         if(!pJson["actual_start_time"].isNull())
         {
             auto timeStr = pJson["actual_start_time"].asString();
@@ -238,7 +265,7 @@ LiveVideos::LiveVideos(const Json::Value &pJson) noexcept(false)
 void LiveVideos::updateByMasqueradedJson(const Json::Value &pJson,
                                             const std::vector<std::string> &pMasqueradingVector) noexcept(false)
 {
-    if(pMasqueradingVector.size() != 4)
+    if(pMasqueradingVector.size() != 5)
     {
         LOG_ERROR << "Bad masquerading vector";
         return;
@@ -252,17 +279,17 @@ void LiveVideos::updateByMasqueradedJson(const Json::Value &pJson,
     }
     if(!pMasqueradingVector[1].empty() && pJson.isMember(pMasqueradingVector[1]))
     {
+        dirtyFlag_[1] = true;
         if(!pJson[pMasqueradingVector[1]].isNull())
         {
-            channelId_=std::make_shared<std::string>(pJson[pMasqueradingVector[1]].asString());
+            liveVideoId_=std::make_shared<std::string>(pJson[pMasqueradingVector[1]].asString());
         }
     }
     if(!pMasqueradingVector[2].empty() && pJson.isMember(pMasqueradingVector[2]))
     {
-        dirtyFlag_[2] = true;
         if(!pJson[pMasqueradingVector[2]].isNull())
         {
-            delay_=std::make_shared<double>(pJson[pMasqueradingVector[2]].asDouble());
+            channelId_=std::make_shared<std::string>(pJson[pMasqueradingVector[2]].asString());
         }
     }
     if(!pMasqueradingVector[3].empty() && pJson.isMember(pMasqueradingVector[3]))
@@ -270,7 +297,15 @@ void LiveVideos::updateByMasqueradedJson(const Json::Value &pJson,
         dirtyFlag_[3] = true;
         if(!pJson[pMasqueradingVector[3]].isNull())
         {
-            auto timeStr = pJson[pMasqueradingVector[3]].asString();
+            delay_=std::make_shared<double>(pJson[pMasqueradingVector[3]].asDouble());
+        }
+    }
+    if(!pMasqueradingVector[4].empty() && pJson.isMember(pMasqueradingVector[4]))
+    {
+        dirtyFlag_[4] = true;
+        if(!pJson[pMasqueradingVector[4]].isNull())
+        {
+            auto timeStr = pJson[pMasqueradingVector[4]].asString();
             struct tm stm;
             memset(&stm,0,sizeof(stm));
             auto p = strptime(timeStr.c_str(),"%Y-%m-%d %H:%M:%S",&stm);
@@ -302,6 +337,14 @@ void LiveVideos::updateByJson(const Json::Value &pJson) noexcept(false)
             videoId_=std::make_shared<std::string>(pJson["video_id"].asString());
         }
     }
+    if(pJson.isMember("live_video_id"))
+    {
+        dirtyFlag_[1] = true;
+        if(!pJson["live_video_id"].isNull())
+        {
+            liveVideoId_=std::make_shared<std::string>(pJson["live_video_id"].asString());
+        }
+    }
     if(pJson.isMember("channel_id"))
     {
         if(!pJson["channel_id"].isNull())
@@ -311,7 +354,7 @@ void LiveVideos::updateByJson(const Json::Value &pJson) noexcept(false)
     }
     if(pJson.isMember("delay"))
     {
-        dirtyFlag_[2] = true;
+        dirtyFlag_[3] = true;
         if(!pJson["delay"].isNull())
         {
             delay_=std::make_shared<double>(pJson["delay"].asDouble());
@@ -319,7 +362,7 @@ void LiveVideos::updateByJson(const Json::Value &pJson) noexcept(false)
     }
     if(pJson.isMember("actual_start_time"))
     {
-        dirtyFlag_[3] = true;
+        dirtyFlag_[4] = true;
         if(!pJson["actual_start_time"].isNull())
         {
             auto timeStr = pJson["actual_start_time"].asString();
@@ -367,6 +410,33 @@ void LiveVideos::setVideoId(std::string &&pVideoId) noexcept
     dirtyFlag_[0] = true;
 }
 
+const std::string &LiveVideos::getValueOfLiveVideoId() const noexcept
+{
+    static const std::string defaultValue = std::string();
+    if(liveVideoId_)
+        return *liveVideoId_;
+    return defaultValue;
+}
+const std::shared_ptr<std::string> &LiveVideos::getLiveVideoId() const noexcept
+{
+    return liveVideoId_;
+}
+void LiveVideos::setLiveVideoId(const std::string &pLiveVideoId) noexcept
+{
+    liveVideoId_ = std::make_shared<std::string>(pLiveVideoId);
+    dirtyFlag_[1] = true;
+}
+void LiveVideos::setLiveVideoId(std::string &&pLiveVideoId) noexcept
+{
+    liveVideoId_ = std::make_shared<std::string>(std::move(pLiveVideoId));
+    dirtyFlag_[1] = true;
+}
+void LiveVideos::setLiveVideoIdToNull() noexcept
+{
+    liveVideoId_.reset();
+    dirtyFlag_[1] = true;
+}
+
 const std::string &LiveVideos::getValueOfChannelId() const noexcept
 {
     static const std::string defaultValue = std::string();
@@ -381,12 +451,12 @@ const std::shared_ptr<std::string> &LiveVideos::getChannelId() const noexcept
 void LiveVideos::setChannelId(const std::string &pChannelId) noexcept
 {
     channelId_ = std::make_shared<std::string>(pChannelId);
-    dirtyFlag_[1] = true;
+    dirtyFlag_[2] = true;
 }
 void LiveVideos::setChannelId(std::string &&pChannelId) noexcept
 {
     channelId_ = std::make_shared<std::string>(std::move(pChannelId));
-    dirtyFlag_[1] = true;
+    dirtyFlag_[2] = true;
 }
 
 const double &LiveVideos::getValueOfDelay() const noexcept
@@ -403,7 +473,7 @@ const std::shared_ptr<double> &LiveVideos::getDelay() const noexcept
 void LiveVideos::setDelay(const double &pDelay) noexcept
 {
     delay_ = std::make_shared<double>(pDelay);
-    dirtyFlag_[2] = true;
+    dirtyFlag_[3] = true;
 }
 
 const ::trantor::Date &LiveVideos::getValueOfActualStartTime() const noexcept
@@ -420,12 +490,12 @@ const std::shared_ptr<::trantor::Date> &LiveVideos::getActualStartTime() const n
 void LiveVideos::setActualStartTime(const ::trantor::Date &pActualStartTime) noexcept
 {
     actualStartTime_ = std::make_shared<::trantor::Date>(pActualStartTime);
-    dirtyFlag_[3] = true;
+    dirtyFlag_[4] = true;
 }
 void LiveVideos::setActualStartTimeToNull() noexcept
 {
     actualStartTime_.reset();
-    dirtyFlag_[3] = true;
+    dirtyFlag_[4] = true;
 }
 
 void LiveVideos::updateId(const uint64_t id)
@@ -440,6 +510,7 @@ const std::vector<std::string> &LiveVideos::insertColumns() noexcept
 {
     static const std::vector<std::string> inCols={
         "video_id",
+        "live_video_id",
         "channel_id",
         "delay",
         "actual_start_time"
@@ -462,6 +533,17 @@ void LiveVideos::outputArgs(drogon::orm::internal::SqlBinder &binder) const
     }
     if(dirtyFlag_[1])
     {
+        if(getLiveVideoId())
+        {
+            binder << getValueOfLiveVideoId();
+        }
+        else
+        {
+            binder << nullptr;
+        }
+    }
+    if(dirtyFlag_[2])
+    {
         if(getChannelId())
         {
             binder << getValueOfChannelId();
@@ -471,7 +553,7 @@ void LiveVideos::outputArgs(drogon::orm::internal::SqlBinder &binder) const
             binder << nullptr;
         }
     }
-    if(dirtyFlag_[2])
+    if(dirtyFlag_[3])
     {
         if(getDelay())
         {
@@ -482,7 +564,7 @@ void LiveVideos::outputArgs(drogon::orm::internal::SqlBinder &binder) const
             binder << nullptr;
         }
     }
-    if(dirtyFlag_[3])
+    if(dirtyFlag_[4])
     {
         if(getActualStartTime())
         {
@@ -514,6 +596,10 @@ const std::vector<std::string> LiveVideos::updateColumns() const
     {
         ret.push_back(getColumnName(3));
     }
+    if(dirtyFlag_[4])
+    {
+        ret.push_back(getColumnName(4));
+    }
     return ret;
 }
 
@@ -532,6 +618,17 @@ void LiveVideos::updateArgs(drogon::orm::internal::SqlBinder &binder) const
     }
     if(dirtyFlag_[1])
     {
+        if(getLiveVideoId())
+        {
+            binder << getValueOfLiveVideoId();
+        }
+        else
+        {
+            binder << nullptr;
+        }
+    }
+    if(dirtyFlag_[2])
+    {
         if(getChannelId())
         {
             binder << getValueOfChannelId();
@@ -541,7 +638,7 @@ void LiveVideos::updateArgs(drogon::orm::internal::SqlBinder &binder) const
             binder << nullptr;
         }
     }
-    if(dirtyFlag_[2])
+    if(dirtyFlag_[3])
     {
         if(getDelay())
         {
@@ -552,7 +649,7 @@ void LiveVideos::updateArgs(drogon::orm::internal::SqlBinder &binder) const
             binder << nullptr;
         }
     }
-    if(dirtyFlag_[3])
+    if(dirtyFlag_[4])
     {
         if(getActualStartTime())
         {
@@ -574,6 +671,14 @@ Json::Value LiveVideos::toJson() const
     else
     {
         ret["video_id"]=Json::Value();
+    }
+    if(getLiveVideoId())
+    {
+        ret["live_video_id"]=getValueOfLiveVideoId();
+    }
+    else
+    {
+        ret["live_video_id"]=Json::Value();
     }
     if(getChannelId())
     {
@@ -611,7 +716,7 @@ Json::Value LiveVideos::toMasqueradedJson(
     const std::vector<std::string> &pMasqueradingVector) const
 {
     Json::Value ret;
-    if(pMasqueradingVector.size() == 4)
+    if(pMasqueradingVector.size() == 5)
     {
         if(!pMasqueradingVector[0].empty())
         {
@@ -626,9 +731,9 @@ Json::Value LiveVideos::toMasqueradedJson(
         }
         if(!pMasqueradingVector[1].empty())
         {
-            if(getChannelId())
+            if(getLiveVideoId())
             {
-                ret[pMasqueradingVector[1]]=getValueOfChannelId();
+                ret[pMasqueradingVector[1]]=getValueOfLiveVideoId();
             }
             else
             {
@@ -637,9 +742,9 @@ Json::Value LiveVideos::toMasqueradedJson(
         }
         if(!pMasqueradingVector[2].empty())
         {
-            if(getDelay())
+            if(getChannelId())
             {
-                ret[pMasqueradingVector[2]]=getValueOfDelay();
+                ret[pMasqueradingVector[2]]=getValueOfChannelId();
             }
             else
             {
@@ -648,13 +753,24 @@ Json::Value LiveVideos::toMasqueradedJson(
         }
         if(!pMasqueradingVector[3].empty())
         {
-            if(getActualStartTime())
+            if(getDelay())
             {
-                ret[pMasqueradingVector[3]]=getActualStartTime()->toDbStringLocal();
+                ret[pMasqueradingVector[3]]=getValueOfDelay();
             }
             else
             {
                 ret[pMasqueradingVector[3]]=Json::Value();
+            }
+        }
+        if(!pMasqueradingVector[4].empty())
+        {
+            if(getActualStartTime())
+            {
+                ret[pMasqueradingVector[4]]=getActualStartTime()->toDbStringLocal();
+            }
+            else
+            {
+                ret[pMasqueradingVector[4]]=Json::Value();
             }
         }
         return ret;
@@ -667,6 +783,14 @@ Json::Value LiveVideos::toMasqueradedJson(
     else
     {
         ret["video_id"]=Json::Value();
+    }
+    if(getLiveVideoId())
+    {
+        ret["live_video_id"]=getValueOfLiveVideoId();
+    }
+    else
+    {
+        ret["live_video_id"]=Json::Value();
     }
     if(getChannelId())
     {
@@ -707,9 +831,14 @@ bool LiveVideos::validateJsonForCreation(const Json::Value &pJson, std::string &
         err="The video_id column cannot be null";
         return false;
     }
+    if(pJson.isMember("live_video_id"))
+    {
+        if(!validJsonOfField(1, "live_video_id", pJson["live_video_id"], err, true))
+            return false;
+    }
     if(pJson.isMember("channel_id"))
     {
-        if(!validJsonOfField(1, "channel_id", pJson["channel_id"], err, true))
+        if(!validJsonOfField(2, "channel_id", pJson["channel_id"], err, true))
             return false;
     }
     else
@@ -719,7 +848,7 @@ bool LiveVideos::validateJsonForCreation(const Json::Value &pJson, std::string &
     }
     if(pJson.isMember("delay"))
     {
-        if(!validJsonOfField(2, "delay", pJson["delay"], err, true))
+        if(!validJsonOfField(3, "delay", pJson["delay"], err, true))
             return false;
     }
     else
@@ -729,7 +858,7 @@ bool LiveVideos::validateJsonForCreation(const Json::Value &pJson, std::string &
     }
     if(pJson.isMember("actual_start_time"))
     {
-        if(!validJsonOfField(3, "actual_start_time", pJson["actual_start_time"], err, true))
+        if(!validJsonOfField(4, "actual_start_time", pJson["actual_start_time"], err, true))
             return false;
     }
     return true;
@@ -738,7 +867,7 @@ bool LiveVideos::validateMasqueradedJsonForCreation(const Json::Value &pJson,
                                                     const std::vector<std::string> &pMasqueradingVector,
                                                     std::string &err)
 {
-    if(pMasqueradingVector.size() != 4)
+    if(pMasqueradingVector.size() != 5)
     {
         err = "Bad masquerading vector";
         return false;
@@ -764,11 +893,6 @@ bool LiveVideos::validateMasqueradedJsonForCreation(const Json::Value &pJson,
               if(!validJsonOfField(1, pMasqueradingVector[1], pJson[pMasqueradingVector[1]], err, true))
                   return false;
           }
-        else
-        {
-            err="The " + pMasqueradingVector[1] + " column cannot be null";
-            return false;
-        }
       }
       if(!pMasqueradingVector[2].empty())
       {
@@ -788,6 +912,19 @@ bool LiveVideos::validateMasqueradedJsonForCreation(const Json::Value &pJson,
           if(pJson.isMember(pMasqueradingVector[3]))
           {
               if(!validJsonOfField(3, pMasqueradingVector[3], pJson[pMasqueradingVector[3]], err, true))
+                  return false;
+          }
+        else
+        {
+            err="The " + pMasqueradingVector[3] + " column cannot be null";
+            return false;
+        }
+      }
+      if(!pMasqueradingVector[4].empty())
+      {
+          if(pJson.isMember(pMasqueradingVector[4]))
+          {
+              if(!validJsonOfField(4, pMasqueradingVector[4], pJson[pMasqueradingVector[4]], err, true))
                   return false;
           }
       }
@@ -811,9 +948,14 @@ bool LiveVideos::validateJsonForUpdate(const Json::Value &pJson, std::string &er
         err = "The value of primary key must be set in the json object for update";
         return false;
     }
+    if(pJson.isMember("live_video_id"))
+    {
+        if(!validJsonOfField(1, "live_video_id", pJson["live_video_id"], err, false))
+            return false;
+    }
     if(pJson.isMember("channel_id"))
     {
-        if(!validJsonOfField(1, "channel_id", pJson["channel_id"], err, false))
+        if(!validJsonOfField(2, "channel_id", pJson["channel_id"], err, false))
             return false;
     }
     else
@@ -823,12 +965,12 @@ bool LiveVideos::validateJsonForUpdate(const Json::Value &pJson, std::string &er
     }
     if(pJson.isMember("delay"))
     {
-        if(!validJsonOfField(2, "delay", pJson["delay"], err, false))
+        if(!validJsonOfField(3, "delay", pJson["delay"], err, false))
             return false;
     }
     if(pJson.isMember("actual_start_time"))
     {
-        if(!validJsonOfField(3, "actual_start_time", pJson["actual_start_time"], err, false))
+        if(!validJsonOfField(4, "actual_start_time", pJson["actual_start_time"], err, false))
             return false;
     }
     return true;
@@ -837,7 +979,7 @@ bool LiveVideos::validateMasqueradedJsonForUpdate(const Json::Value &pJson,
                                                   const std::vector<std::string> &pMasqueradingVector,
                                                   std::string &err)
 {
-    if(pMasqueradingVector.size() != 4)
+    if(pMasqueradingVector.size() != 5)
     {
         err = "Bad masquerading vector";
         return false;
@@ -858,19 +1000,24 @@ bool LiveVideos::validateMasqueradedJsonForUpdate(const Json::Value &pJson,
           if(!validJsonOfField(1, pMasqueradingVector[1], pJson[pMasqueradingVector[1]], err, false))
               return false;
       }
-    else
-    {
-        err = "The value of primary key must be set in the json object for update";
-        return false;
-    }
       if(!pMasqueradingVector[2].empty() && pJson.isMember(pMasqueradingVector[2]))
       {
           if(!validJsonOfField(2, pMasqueradingVector[2], pJson[pMasqueradingVector[2]], err, false))
               return false;
       }
+    else
+    {
+        err = "The value of primary key must be set in the json object for update";
+        return false;
+    }
       if(!pMasqueradingVector[3].empty() && pJson.isMember(pMasqueradingVector[3]))
       {
           if(!validJsonOfField(3, pMasqueradingVector[3], pJson[pMasqueradingVector[3]], err, false))
+              return false;
+      }
+      if(!pMasqueradingVector[4].empty() && pJson.isMember(pMasqueradingVector[4]))
+      {
+          if(!validJsonOfField(4, pMasqueradingVector[4], pJson[pMasqueradingVector[4]], err, false))
               return false;
       }
     }
@@ -912,8 +1059,7 @@ bool LiveVideos::validJsonOfField(size_t index,
         case 1:
             if(pJson.isNull())
             {
-                err="The " + fieldName + " column cannot be null";
-                return false;
+                return true;
             }
             if(!pJson.isString())
             {
@@ -935,13 +1081,33 @@ bool LiveVideos::validJsonOfField(size_t index,
                 err="The " + fieldName + " column cannot be null";
                 return false;
             }
+            if(!pJson.isString())
+            {
+                err="Type error in the "+fieldName+" field";
+                return false;
+            }
+            if(pJson.isString() && std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t>{}
+                .from_bytes(pJson.asCString()).size() > 255)
+            {
+                err="String length exceeds limit for the " +
+                    fieldName +
+                    " field (the maximum value is 255)";
+                return false;
+            }
+            break;
+        case 3:
+            if(pJson.isNull())
+            {
+                err="The " + fieldName + " column cannot be null";
+                return false;
+            }
             if(!pJson.isNumeric())
             {
                 err="Type error in the "+fieldName+" field";
                 return false;
             }
             break;
-        case 3:
+        case 4:
             if(pJson.isNull())
             {
                 return true;

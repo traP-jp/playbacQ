@@ -28,6 +28,7 @@ std::optional<std::chrono::sys_time<std::chrono::milliseconds>> BotPlugin::iso86
 
 drogon::Task<void> BotPlugin::registerChannel(
 	const std::string& channelId,
+	const std::string& liveVideoId,
 	const std::string& videoId,
 	double delay
 ) {
@@ -54,7 +55,7 @@ drogon::Task<void> BotPlugin::registerChannel(
 				co_return;
 			}
 			const auto& existingLiveVideo = liveVideo.front();
-			const std::string youtubeID = existingLiveVideo.getValueOfVideoId();
+			const std::string youtubeID = existingLiveVideo.getValueOfLiveVideoId();
 			auto videoInfoRaw = co_await YoutubeAPI::fetchLiveInfo(youtubeID, youtubeApiKey);
 			if (!videoInfoRaw) {
 				std::cerr << "Failed to fetch live info from YouTube API for channel: " << channelId << std::endl;
@@ -83,6 +84,7 @@ drogon::Task<void> BotPlugin::registerChannel(
 		// DBに登録
 		drogon_model::playbacq::LiveVideos newLiveVideo;
 		newLiveVideo.setVideoId(videoId);
+		newLiveVideo.setLiveVideoId(liveVideoId);
 		newLiveVideo.setChannelId(channelId);
 		newLiveVideo.setDelay(delay);
 		co_await mapper.insert(newLiveVideo);
@@ -127,7 +129,7 @@ drogon::Task<drogon::HttpResponsePtr> BotPlugin::postComment(
 			co_return resp;
 		}
 		auto& liveVideoEntry = liveVideo.front();
-		const std::string youtubeID = liveVideoEntry.getValueOfVideoId();
+		const std::string youtubeID = liveVideoEntry.getValueOfLiveVideoId();
 		if (!liveVideoEntry.getActualStartTime()) {
 			// ライブ配信が始まったかどうか確認
 			auto videoInfoRaw = co_await YoutubeAPI::fetchLiveInfo(youtubeID, youtubeApiKey);
@@ -168,14 +170,15 @@ drogon::Task<drogon::HttpResponsePtr> BotPlugin::postComment(
 			if (check_timers_.contains(channelId.data()))
 				loop->invalidateTimer(check_timers_[channelId.data()]);
 			// 1分後に終了確認するタイマーをセット
-			trantor::TimerId timer_id = loop->runAfter(checkInterval, [this, channelId = std::string(channelId), youtubeID]() {
-				drogon::async_run([this, channelId, youtubeID]() -> drogon::Task<void> {
+			const std::string videoId = liveVideoEntry.getValueOfVideoId();
+			trantor::TimerId timer_id = loop->runAfter(checkInterval, [this, channelId = std::string(channelId), youtubeID, videoId]() {
+				drogon::async_run([this, channelId, youtubeID, videoId]() -> drogon::Task<void> {
 					auto videoInfoRaw = co_await YoutubeAPI::fetchLiveInfo(youtubeID, youtubeApiKey);
 					if (videoInfoRaw && videoInfoRaw->actualEndTime.has_value()) {
 						// ライブが終了している場合はクリーンアップ
 						drogon::orm::CoroMapper<drogon_model::playbacq::LiveVideos> mapper(drogon::app().getDbClient());
 						try {
-							auto liveVideo = co_await mapper.findByPrimaryKey(make_tuple(youtubeID, channelId));
+							auto liveVideo = co_await mapper.findByPrimaryKey(make_tuple(videoId, channelId));
 							co_await mapper.deleteByPrimaryKey(liveVideo.getPrimaryKey());
 						}
 						catch (const std::exception& e) {
@@ -287,13 +290,7 @@ drogon::Task<drogon::HttpResponsePtr> BotPlugin::updateComment(
 		}
 		auto& commentEntry = comments.front();
 		commentEntry.setComment(comment.data());
-		size_t updatedCount = co_await mapper.update(commentEntry);
-		if (updatedCount == 0) {
-			auto resp = drogon::HttpResponse::newHttpResponse();
-			resp->setStatusCode(drogon::HttpStatusCode::k500InternalServerError);
-			resp->setBody("Failed to update comment");
-			co_return resp;
-		}
+		co_await mapper.update(commentEntry);
 		auto resp = drogon::HttpResponse::newHttpResponse();
 		resp->setStatusCode(drogon::HttpStatusCode::k200OK);
 		co_return resp;

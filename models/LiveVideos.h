@@ -45,6 +45,7 @@ class LiveVideos
     struct Cols
     {
         static const std::string _video_id;
+        static const std::string _live_video_id;
         static const std::string _channel_id;
         static const std::string _delay;
         static const std::string _actual_start_time;
@@ -108,6 +109,16 @@ class LiveVideos
     void setVideoId(const std::string &pVideoId) noexcept;
     void setVideoId(std::string &&pVideoId) noexcept;
 
+    /**  For column live_video_id  */
+    ///Get the value of the column live_video_id, returns the default value if the column is null
+    const std::string &getValueOfLiveVideoId() const noexcept;
+    ///Return a shared_ptr object pointing to the column const value, or an empty shared_ptr object if the column is null
+    const std::shared_ptr<std::string> &getLiveVideoId() const noexcept;
+    ///Set the value of the column live_video_id
+    void setLiveVideoId(const std::string &pLiveVideoId) noexcept;
+    void setLiveVideoId(std::string &&pLiveVideoId) noexcept;
+    void setLiveVideoIdToNull() noexcept;
+
     /**  For column channel_id  */
     ///Get the value of the column channel_id, returns the default value if the column is null
     const std::string &getValueOfChannelId() const noexcept;
@@ -135,7 +146,7 @@ class LiveVideos
     void setActualStartTimeToNull() noexcept;
 
 
-    static size_t getColumnNumber() noexcept {  return 4;  }
+    static size_t getColumnNumber() noexcept {  return 5;  }
     static const std::string &getColumnName(size_t index) noexcept(false);
 
     Json::Value toJson() const;
@@ -158,6 +169,7 @@ class LiveVideos
     ///For mysql or sqlite3
     void updateId(const uint64_t id);
     std::shared_ptr<std::string> videoId_;
+    std::shared_ptr<std::string> liveVideoId_;
     std::shared_ptr<std::string> channelId_;
     std::shared_ptr<double> delay_;
     std::shared_ptr<::trantor::Date> actualStartTime_;
@@ -172,7 +184,7 @@ class LiveVideos
         const bool notNull_;
     };
     static const std::vector<MetaData> metaData_;
-    bool dirtyFlag_[4]={ false };
+    bool dirtyFlag_[5]={ false };
   public:
     static const std::string &sqlForFindingByPrimaryKey()
     {
@@ -197,15 +209,20 @@ class LiveVideos
         }
         if(dirtyFlag_[1])
         {
-            sql += "channel_id,";
+            sql += "live_video_id,";
             ++parametersCount;
         }
         if(dirtyFlag_[2])
         {
-            sql += "delay,";
+            sql += "channel_id,";
             ++parametersCount;
         }
         if(dirtyFlag_[3])
+        {
+            sql += "delay,";
+            ++parametersCount;
+        }
+        if(dirtyFlag_[4])
         {
             sql += "actual_start_time,";
             ++parametersCount;
@@ -234,6 +251,11 @@ class LiveVideos
 
         }
         if(dirtyFlag_[3])
+        {
+            sql.append("?,");
+
+        }
+        if(dirtyFlag_[4])
         {
             sql.append("?,");
 

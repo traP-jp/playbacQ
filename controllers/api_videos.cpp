@@ -393,6 +393,13 @@ drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
 		}
 		// 動画の長さをYoutubeから取得する。
 		newVideo.setDuration(videoInfo.duration.value_or(0));
+
+		newVideo.setUserId(req->getAttributes()->get<std::string>("userId"));
+		newVideo.setStatus((uint8_t)Status::completed);
+
+		drogon::orm::CoroMapper<drogon_model::playbacq::Videos> mapper(drogon::app().getDbClient());
+		co_await mapper.insert(newVideo);
+
 		// ライブ配信かつtraQチャンネルIDが設定されている場合は、BotPluginに登録する。
 		if (!jsonPtr->get("channel_id", "").asString().empty() &&
 			videoInfo.type && *videoInfo.type == "youtube live") {
@@ -400,14 +407,14 @@ drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
 			// デフォルトの遅延は15秒
 			double delay = jsonPtr->get("delay", 15.0).asDouble();
 			auto botPlugin = drogon::app().getPlugin<BotPlugin>();
-			botPlugin->registerChannel(channelId, youtubeID, delay);
+			if (!botPlugin) {
+				auto resp = drogon::HttpResponse::newHttpResponse();
+				resp->setStatusCode(drogon::HttpStatusCode::k500InternalServerError);
+				resp->setBody("BotPlugin is not available");
+				co_return resp;
+			}
+			co_await botPlugin->registerChannel(channelId, youtubeID, videoId, delay);
 		}
-
-		newVideo.setUserId(req->getAttributes()->get<std::string>("userId"));
-		newVideo.setStatus((uint8_t)Status::completed);
-
-		drogon::orm::CoroMapper<drogon_model::playbacq::Videos> mapper(drogon::app().getDbClient());
-		co_await mapper.insert(newVideo);
 
 		Json::Value jsonResponse = newVideo.toJson();
 		auto resp = drogon::HttpResponse::newHttpJsonResponse(jsonResponse);

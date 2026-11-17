@@ -49,6 +49,7 @@ erDiagram
 
   live_videos {
 	varchar video_id PK,FK
+	varchar live_video_id
 	varchar channel_id PK
 	double delay
 	DATETIME(3) actual_start_time

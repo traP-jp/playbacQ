@@ -31,6 +31,7 @@ public:
 
 	drogon::Task<void> registerChannel(
 		const std::string& channelId,
+		const std::string& liveVideoId,
 		const std::string& videoId,
 		double delay
 	);
