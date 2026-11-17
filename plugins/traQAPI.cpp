@@ -185,28 +185,85 @@ drogon::Task<std::expected<std::pair<std::string, std::string>, drogon::HttpResp
     co_return std::make_pair(std::move(imageData), std::move(contentType));
 }
 
-drogon::Task<drogon::HttpResponsePtr> traQAPI::getChannels(std::string query)
+drogon::Task<drogon::HttpResponsePtr> traQAPI::getChannels()
 {
-    // queryが安全か確認
-    if ([&query]() -> bool {
-        if (query.empty()) return false;
-        // 512文字以上のチャンネルは存在しないはず
-            if (query.size() > 512) return true;
-            return !std::ranges::none_of(query, [](unsigned char c) {
-                return std::iscntrl(c);
-                });
-        }()) {
-        auto badReq = drogon::HttpResponse::newHttpResponse();
-        badReq->setStatusCode(drogon::k400BadRequest);
-        badReq->setContentTypeCode(drogon::CT_TEXT_PLAIN);
-        badReq->setBody("Invalid query parameter");
-        co_return badReq;
+    // キャッシュが有効であればキャッシュを返す
+    if (std::chrono::steady_clock::now() - allChannelsCache.timestamp < cacheDuration) {
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(allChannelsCache.channels);
+        resp->setStatusCode(drogon::k200OK);
+        co_return resp;
     }
 
-    co_return co_await getFromTraQAPI("/api/v3/channels", {
-        { "include-dm", "false" },
-        { "path", query }
+    // APIからチャンネル情報を取得
+    auto resp = co_await getFromTraQAPI("/api/v3/channels", {
+        { "include-dm", "false" }
         });
+    if (resp->getStatusCode() != drogon::k200OK) {
+        std::cerr << "Error fetching channels: " << resp->getBody() << std::endl;
+        auto response = drogon::HttpResponse::newHttpResponse();
+        response->setStatusCode(drogon::k500InternalServerError);
+        response->setContentTypeCode(drogon::CT_TEXT_PLAIN);
+        response->setBody(std::format("Error fetching channels: {}", resp->getBody()));
+        co_return response;
+    }
+    auto jsonPtr = resp->getJsonObject();
+    if (!jsonPtr) {
+        std::cerr << "Error parsing JSON response from traQ API" << std::endl;
+        auto response = drogon::HttpResponse::newHttpResponse();
+        response->setStatusCode(drogon::k500InternalServerError);
+        response->setContentTypeCode(drogon::CT_TEXT_PLAIN);
+        response->setBody("Error parsing JSON response from traQ API");
+        co_return response;
+    }
+    if (!jsonPtr->isMember("public") || !jsonPtr->get("public", Json::Value()).isArray()) {
+        std::cerr << "Unexpected JSON format from traQ API" << std::endl;
+        auto response = drogon::HttpResponse::newHttpResponse();
+        response->setStatusCode(drogon::k500InternalServerError);
+        response->setContentTypeCode(drogon::CT_TEXT_PLAIN);
+        response->setBody("Unexpected JSON format from traQ API");
+        co_return response;
+    }
+    // グラフを構築
+    std::unordered_map<std::string, std::vector<std::string>> channel_graph;
+    std::unordered_map<std::string, std::string> channel_names;
+    std::vector<std::string> root_channels;
+    for (const auto& channel : jsonPtr->get("public", Json::Value())) {
+        if (channel.isMember("id") && channel.isMember("name")) {
+            const std::string channel_id = channel.get("id", "").asString();
+            channel_names[channel_id] = channel.get("name", "").asString();
+            if (channel.isMember("children") && channel.get("children", "").isArray())
+                for (const auto& child_id : channel.get("children", Json::Value()))
+                    channel_graph[channel_id].push_back(child_id.asString());
+            if (!channel.isMember("parentId") || channel.get("parentId", "").asString().empty())
+                root_channels.push_back(channel_id);
+        }
+    }
+    // DFSでチャンネルをフラット化
+    std::vector<std::pair<std::string, std::string>> flat_channels;
+    std::function<void(const std::string&, const std::string&)> dfs = [&](const std::string& channel_id, const std::string& parent_name) {
+        const std::string& channel_name = channel_names[channel_id];
+        std::string full_name = parent_name.empty() ? channel_name : parent_name + "/" + channel_name;
+        flat_channels.emplace_back(channel_id, full_name);
+        for (const auto& child_id : channel_graph[channel_id]) {
+            dfs(child_id, full_name);
+        }
+        };
+    for (const auto& root_id : root_channels)
+        dfs(root_id, "");
+    // キャッシュに保存
+    {
+        std::unique_lock lock(mutex);
+        allChannelsCache = { Json::Value(Json::arrayValue), std::chrono::steady_clock::now() };
+        for (const auto& [id, name] : flat_channels) {
+            Json::Value channel_info;
+            channel_info["id"] = id;
+            channel_info["name"] = name;
+            allChannelsCache.channels.append(std::move(channel_info));
+        }
+    }
+    auto response = drogon::HttpResponse::newHttpJsonResponse(allChannelsCache.channels);
+    response->setStatusCode(drogon::k200OK);
+    co_return response;
 }
 
 drogon::Task<bool> traQAPI::channelExists(std::string_view channelId)
