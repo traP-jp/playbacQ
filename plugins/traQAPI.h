@@ -28,6 +28,7 @@ struct stampImageCacheEntry {
 struct allChannelsCacheEntry {
   Json::Value channels;
   std::chrono::steady_clock::time_point timestamp;
+  bool valid = false;
 };
 
 class traQAPI : public drogon::Plugin<traQAPI>

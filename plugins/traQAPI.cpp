@@ -188,7 +188,7 @@ drogon::Task<std::expected<std::pair<std::string, std::string>, drogon::HttpResp
 drogon::Task<drogon::HttpResponsePtr> traQAPI::getChannels()
 {
     // キャッシュが有効であればキャッシュを返す
-    if (std::chrono::steady_clock::now() - allChannelsCache.timestamp < cacheDuration) {
+    if (allChannelsCache.valid && std::chrono::steady_clock::now() - allChannelsCache.timestamp < cacheDuration) {
         auto resp = drogon::HttpResponse::newHttpJsonResponse(allChannelsCache.channels);
         resp->setStatusCode(drogon::k200OK);
         co_return resp;
@@ -253,7 +253,7 @@ drogon::Task<drogon::HttpResponsePtr> traQAPI::getChannels()
     // キャッシュに保存
     {
         std::unique_lock lock(mutex);
-        allChannelsCache = { Json::Value(Json::arrayValue), std::chrono::steady_clock::now() };
+        allChannelsCache = { Json::Value(Json::arrayValue), std::chrono::steady_clock::now(), true };
         for (const auto& [id, name] : flat_channels) {
             Json::Value channel_info;
             channel_info["id"] = id;
