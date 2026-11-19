@@ -26,6 +26,8 @@ private:
 	std::mutex mutex_;
 	std::unordered_map<std::string, trantor::TimerId> check_timers_;
 	double checkInterval = 60.0; // 1分ごとに終了確認する
+
+	bool containsURL(std::string_view text);
 public:
 	void initAndStart(const Json::Value& config) override;
 

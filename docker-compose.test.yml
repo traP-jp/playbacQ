@@ -42,7 +42,7 @@ services:
       cmake --build . -j$$(nproc) && 
       ctest --output-on-failure -VV &&
       apt-get update && apt-get install -y gcovr &&
-      gcovr -r /app . --exclude '.*/test/.*' --xml-pretty -o /app/coverage.xml"
+      gcovr -r /app . --exclude '.*/test/.*' --exclude '.*/models/.*' --xml-pretty -o /app/coverage.xml"
 
   test-db:
     image: mysql:8.0

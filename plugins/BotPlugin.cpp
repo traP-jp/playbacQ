@@ -16,6 +16,11 @@ void BotPlugin::initAndStart(const Json::Value& config)
 	youtubeApiKey = std::string(apiKeyEnv);
 }
 
+bool BotPlugin::containsURL(std::string_view text) {
+	static const std::regex urlRegex(R"((https?|ftp|file)://[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|])");
+	return std::regex_search(text.begin(), text.end(), urlRegex);
+}
+
 std::optional<std::chrono::sys_time<std::chrono::milliseconds>> BotPlugin::iso8601ToSysTime(const std::string& iso8601) {
 	std::istringstream ss(iso8601);
 	std::chrono::sys_time<std::chrono::milliseconds> tp;
@@ -213,6 +218,14 @@ drogon::Task<drogon::HttpResponsePtr> BotPlugin::postComment(
 			resp->setBody("Invalid CreatedAt format");
 			co_return resp;
 		}
+		// コメントにURLが含まれている場合、受け付けない
+		if (containsURL(comment.data())) {
+			auto resp = drogon::HttpResponse::newHttpResponse();
+			resp->setStatusCode(drogon::HttpStatusCode::k400BadRequest);
+			resp->setBody("Comment contains URL, which is not allowed");
+			co_return resp;
+		}
+
 		// playbacQのvideo IDを取得
 		drogon::orm::CoroMapper<drogon_model::playbacq::Videos> videoMapper(drogon::app().getDbClient());
 		auto videos = co_await videoMapper.findBy(
@@ -289,6 +302,22 @@ drogon::Task<drogon::HttpResponsePtr> BotPlugin::updateComment(
 			co_return resp;
 		}
 		auto& commentEntry = comments.front();
+		// コメントにURLが含まれている場合、コメントを削除
+		if (containsURL(comment.data())) {
+			size_t deletedCount = co_await mapper.deleteByPrimaryKey(commentEntry.getPrimaryKey());
+			if (deletedCount == 0) {
+				std::cerr << "Failed to delete comment containing URL for message: " << messageId << std::endl;
+				auto resp = drogon::HttpResponse::newHttpResponse();
+				resp->setStatusCode(drogon::HttpStatusCode::k500InternalServerError);
+				resp->setBody("Failed to delete comment containing URL");
+				co_return resp;
+			}
+			auto resp = drogon::HttpResponse::newHttpResponse();
+			resp->setStatusCode(drogon::HttpStatusCode::k200OK);
+			resp->setBody("Comment containing URL has been deleted");
+			co_return resp;
+		}
+
 		commentEntry.setComment(comment.data());
 		co_await mapper.update(commentEntry);
 		auto resp = drogon::HttpResponse::newHttpResponse();
