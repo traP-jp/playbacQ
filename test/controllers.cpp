@@ -72,13 +72,14 @@ drogon::HttpResponsePtr sendBotRequest(
 	const std::string& eventType,
 	bool vaildMessage = true,
 	std::string messageId = "bc9106b3-f9b2-4eca-9ba1-72b39b40954e",
-	std::string createdAt = "2026-01-01T13:33:51.632149265Z"
+	std::string createdAt = "2026-01-01T13:33:51.632149265Z",
+	std::string comment = "テストコメント"
 ) {
 	Json::Value webhookBody;
 	if (vaildMessage) {
 		webhookBody["message"]["id"] = messageId;
 		webhookBody["message"]["channelId"] = "channel-id-001";
-		webhookBody["message"]["plainText"] = "テストメッセージ";
+		webhookBody["message"]["plainText"] = comment;
 		webhookBody["message"]["createdAt"] = createdAt;
 	}
 
@@ -1607,6 +1608,38 @@ DROGON_TEST(TRAQ_BOT_WEBHOOK_TEST)
 	resp = sendBotRequest(botTokenStr, "MESSAGE_DELETED");
 	REQUIRE(resp != nullptr);
 	CHECK(resp->getStatusCode() == drogon::k200OK);
+
+	// URLを含むコメントの拒否テスト
+	resp = sendBotRequest(
+		botTokenStr,
+		"MESSAGE_CREATED",
+		true,
+		"bc9106b3-f9b2-4eca-9ba1-72b39b40954e",
+		"2026-01-01T13:33:51.632149265Z",
+		"コメントテスト https://example.com"
+	);
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k400BadRequest);
+
+	// 編集後にURLを含むコメントの削除テスト
+	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k201Created);
+	// 編集
+	resp = sendBotRequest(
+		botTokenStr,
+		"MESSAGE_UPDATED",
+		true,
+		"bc9106b3-f9b2-4eca-9ba1-72b39b40954e",
+		"2026-01-01T13:33:51.632149265Z",
+		"コメントテスト http://example.com"
+	);
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k200OK);
+	// 消えているか確認
+	resp = sendBotRequest(botTokenStr, "MESSAGE_DELETED");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k404NotFound);
 
 	// actualEndTimeが設定されている場合のテスト
 	auto* botPlugin = drogon::app().getPlugin<BotPlugin>();
