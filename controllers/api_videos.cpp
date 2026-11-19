@@ -357,6 +357,7 @@ drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
 		// Youtube APIを使って動画情報を取得する。
 		const char* apiKeyEnv = std::getenv("YOUTUBE_API_KEY");
 		if (apiKeyEnv == nullptr) {
+			std::cerr << "[YOUTUBE ERROR] YouTube API key is not set" << std::endl;
 			auto resp = drogon::HttpResponse::newHttpResponse();
 			resp->setStatusCode(drogon::HttpStatusCode::k500InternalServerError);
 			resp->setBody("YouTube API key is not set");
@@ -408,6 +409,7 @@ drogon::Task<drogon::HttpResponsePtr> videos::postExVideo(HttpRequestPtr req) {
 			double delay = jsonPtr->get("delay", 15.0).asDouble();
 			auto botPlugin = drogon::app().getPlugin<BotPlugin>();
 			if (!botPlugin) {
+				std::cerr << "[BOT PLUGIN ERROR] BotPlugin is not available" << std::endl;
 				auto resp = drogon::HttpResponse::newHttpResponse();
 				resp->setStatusCode(drogon::HttpStatusCode::k500InternalServerError);
 				resp->setBody("BotPlugin is not available");
@@ -473,6 +475,7 @@ drogon::Task<drogon::HttpResponsePtr> videos::refreshExVideoDuration(
 
 		auto redis = drogon::app().getRedisClient();
 		if (!redis) {
+			std::cerr << "[REDIS ERROR] Failed to get Redis client" << std::endl;
 			co_return externalRefreshError(
 				drogon::k500InternalServerError,
 				"Failed to get Redis client"
@@ -576,6 +579,7 @@ drogon::Task<drogon::HttpResponsePtr> videos::refreshExVideoMetadata(
 
 		auto apiKey = youtubeApiKey();
 		if (!apiKey) {
+			std::cerr << "[YOUTUBE ERROR] YouTube API key is not set" << std::endl;
 			co_return externalRefreshError(
 				drogon::k500InternalServerError,
 				"YouTube API key is not set"
@@ -876,6 +880,7 @@ drogon::Task<drogon::HttpResponsePtr> videos::incrementVideoViews([[maybe_unused
 
 		auto redis = drogon::app().getRedisClient();
 		if (!redis) {
+			std::cerr << "[VIEW] Failed to get Redis client" << std::endl;
 			auto resp = drogon::HttpResponse::newHttpResponse();
 			resp->setStatusCode(drogon::HttpStatusCode::k500InternalServerError);
 			resp->setBody("Failed to get Redis client");
