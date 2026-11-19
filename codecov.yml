@@ -15,3 +15,7 @@ comment:
   layout: "reach,diff,flags,files"  # PR コメントに表示する情報
   behavior: default                  # コメントを新規作成 or 更新
   require_changes: false             # カバレッジ変化がなくてもコメントする
+
+ignore:
+  - test/**/*
+  - models/**/*

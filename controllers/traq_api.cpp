@@ -5,6 +5,7 @@
 drogon::Task<drogon::HttpResponsePtr> traq_api::fetchAllStamps([[maybe_unused]] HttpRequestPtr req) {
     auto* traqAPI = drogon::app().getPlugin<traQAPI>();
     if (!traqAPI) {
+        std::cerr << "[TRAQ_API] traQAPI plugin is not initialized" << std::endl;
         auto response = drogon::HttpResponse::newHttpResponse();
         response->setStatusCode(drogon::k500InternalServerError);
         response->setContentTypeCode(drogon::CT_TEXT_PLAIN);
@@ -21,6 +22,7 @@ drogon::Task<drogon::HttpResponsePtr> traq_api::fetchAllStamps([[maybe_unused]] 
 drogon::Task<drogon::HttpResponsePtr> traq_api::getStampImage([[maybe_unused]] HttpRequestPtr req, std::string id) {
     auto* traqAPI = drogon::app().getPlugin<traQAPI>();
     if (!traqAPI) {
+        std::cerr << "[TRAQ_API] traQAPI plugin is not initialized" << std::endl;
         auto response = drogon::HttpResponse::newHttpResponse();
         response->setStatusCode(drogon::k500InternalServerError);
         response->setContentTypeCode(drogon::CT_TEXT_PLAIN);
@@ -40,16 +42,16 @@ drogon::Task<drogon::HttpResponsePtr> traq_api::getStampImage([[maybe_unused]] H
     co_return resp;
 }
 
-drogon::Task<drogon::HttpResponsePtr> traq_api::getChannels(HttpRequestPtr req)
+drogon::Task<drogon::HttpResponsePtr> traq_api::getChannels([[maybe_unused]] HttpRequestPtr req)
 {
     auto* traqAPI = drogon::app().getPlugin<traQAPI>();
     if (!traqAPI) {
+        std::cerr << "[TRAQ_API] traQAPI plugin is not initialized" << std::endl;
         auto response = drogon::HttpResponse::newHttpResponse();
         response->setStatusCode(drogon::k500InternalServerError);
         response->setContentTypeCode(drogon::CT_TEXT_PLAIN);
         response->setBody("traQAPI plugin is not initialized");
         co_return response;
     }
-    std::optional<std::string> query = req->getOptionalParameter<std::string>("query");
-    co_return co_await traqAPI->getChannels(query.value_or(""));
+    co_return co_await traqAPI->getChannels();
 }

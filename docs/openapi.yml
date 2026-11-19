@@ -1277,13 +1277,6 @@ paths:
       x-tested: false
       tags:
         - channel
-      parameters:
-        - name: query
-          in: query
-          required: false
-          schema:
-            type: string
-          description: "チャンネル名の検索クエリ"
       responses:
         "200":
           description: "チャンネルリストを返します。"

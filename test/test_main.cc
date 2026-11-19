@@ -193,17 +193,30 @@ int main(int argc, char** argv)
             "/api/v3/channels",
             [](const drogon::HttpRequestPtr& req,
                 std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-                    Json::Value body(Json::arrayValue);
+                    Json::Value publicChannels(Json::arrayValue);
                     Json::Value channel1;
                     channel1["id"] = "channel-id-001";
                     channel1["name"] = "sample_channel_1";
-                    body.append(channel1);
+                    channel1["children"] = Json::Value(Json::arrayValue);
+                    publicChannels.append(channel1);
 
                     Json::Value channel2;
                     channel2["id"] = "channel-id-002";
                     channel2["name"] = "sample_channel_2";
-                    body.append(channel2);
+                    channel2["children"] = Json::Value(Json::arrayValue);
 
+                    Json::Value channel_child;
+                    channel_child["id"] = "channel-id-003";
+                    channel_child["name"] = "sample_channel_3";
+                    channel_child["children"] = Json::Value(Json::arrayValue);
+                    channel_child["parentId"] = "channel-id-002";
+                    publicChannels.append(channel_child);
+
+                    channel2["children"].append(channel_child["id"]);
+                    publicChannels.append(channel2);
+
+                    Json::Value body(Json::objectValue);
+                    body["public"] = std::move(publicChannels);
                     callback(drogon::HttpResponse::newHttpJsonResponse(body));
             }
         , { drogon::Get });
@@ -260,7 +273,7 @@ int main(int argc, char** argv)
                         callback(resp);
                         return;
                     }
-                    
+
                     {
                         std::lock_guard<std::mutex> lock(g_traqLeaveMutex);
                         g_traqLeaveCalls.fetch_add(1);

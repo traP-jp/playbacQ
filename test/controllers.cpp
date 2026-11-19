@@ -1563,6 +1563,9 @@ DROGON_TEST(TRAQ_BOT_WEBHOOK_TEST)
 	resp = sendSyncRequest(drogon::Post, "/api/ex-videos", exVideoBody);
 	REQUIRE(resp != nullptr);
 	CHECK(resp->getStatusCode() == drogon::k201Created);
+	CHECK(resp->getJsonObject() != nullptr);
+	CHECK((*resp->getJsonObject())["video_id"].isString());
+	std::string videoId = (*resp->getJsonObject())["video_id"].asString();
 
 	// MESSAGE_CREATEDのテスト(actualStartTimeが未設定なので400)
 	{
@@ -1631,4 +1634,37 @@ DROGON_TEST(TRAQ_BOT_WEBHOOK_TEST)
 	resp = sendBotRequest(botTokenStr, "MESSAGE_CREATED");
 	REQUIRE(resp != nullptr);
 	CHECK(resp->getStatusCode() == drogon::k404NotFound);
+
+	// クリーンアップ
+	CHECK(deleteVideo(videoId));
+}
+
+// channel APIのテスト
+DROGON_TEST(CHANNEL_API_TEST)
+{
+	auto resp = sendSyncRequest(drogon::Get, "/traq-api/channels");
+	REQUIRE(resp != nullptr);
+	CHECK(resp->getStatusCode() == drogon::k200OK);
+	REQUIRE(resp->getJsonObject() != nullptr);
+	auto json = resp->getJsonObject();
+	CHECK(json->isArray());
+	// チャンネル一覧を取得
+	std::vector<std::string> channels, channelIds;
+	for (const auto& channel : *json) {
+		CHECK(channel.isObject());
+		CHECK(channel.isMember("id"));
+		CHECK(channel.isMember("name"));
+		CHECK(channel["id"].isString());
+		CHECK(channel["name"].isString());
+		channels.push_back(channel["name"].asString());
+		channelIds.push_back(channel["id"].asString());
+	}
+	CHECK(channels.size() == 3);
+	CHECK(std::ranges::contains(channels, "sample_channel_1"));
+	CHECK(std::ranges::contains(channels, "sample_channel_2"));
+	CHECK(std::ranges::contains(channels, "sample_channel_2/sample_channel_3"));
+	CHECK(channelIds.size() == 3);
+	CHECK(std::ranges::contains(channelIds, "channel-id-001"));
+	CHECK(std::ranges::contains(channelIds, "channel-id-002"));
+	CHECK(std::ranges::contains(channelIds, "channel-id-003"));
 }
